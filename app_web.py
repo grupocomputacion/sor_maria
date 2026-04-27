@@ -4,18 +4,32 @@ from psycopg2 import extras
 import pandas as pd
 import io
 from datetime import datetime, date
+from fpdf import FPDF
 
 # --- CONFIGURACIÓN ---
 st.set_page_config(page_title="SOR MARIA - Gestión Integral", layout="wide")
 
 def conectar():
     try:
+        # Usamos st.secrets para conectar a Neon local o en la nube
         return psycopg2.connect(st.secrets["postgres_url"])
     except Exception as e:
-        st.error(f"Error de conexión: {e}")
+        st.error(f"Error crítico de conexión: {e}")
         return None
 
-# --- INICIALIZACIÓN ---
+def clean_text(t):
+    """Limpia caracteres para evitar errores en la generación de PDF"""
+    if t is None: return ""
+    return str(t).encode('latin-1', 'replace').decode('latin-1')
+
+# --- CLASE PARA PDF ---
+class PDF(FPDF):
+    def header(self):
+        self.set_font('Arial', 'B', 15)
+        self.cell(0, 10, 'INSTITUTO SOR MARIA DE PAZ Y FIGUEROA', 0, 1, 'C')
+        self.ln(5)
+
+# --- INICIALIZACIÓN DE TABLAS ---
 def init_db():
     conn = conectar()
     if conn:
@@ -38,152 +52,236 @@ def init_db():
 init_db()
 
 # --- NAVEGACIÓN ---
-menu = st.sidebar.radio("MENÚ", ["Seguimiento de Notas", "Gestión de Encuentros", "Cargar Alumno", "Backup & Datos"])
+menu = st.sidebar.radio("MENÚ PRINCIPAL", ["Seguimiento de Notas", "Gestión de Encuentros", "Ficha y Reportes", "Cargar Alumno", "Backup & Datos"])
 
-
-# --- 1. SEGUIMIENTO DE NOTAS (BLINDADO Y ESTÉTICO) ---
+# --- 1. SEGUIMIENTO DE NOTAS ---
 if menu == "Seguimiento de Notas":
     st.subheader("📝 Instancias de Evaluación")
     conn = conectar()
-    df = pd.read_sql("SELECT id, nombre, curso, tercera_materia, estado FROM alumnos ORDER BY nombre", conn)
-    
-    if not df.empty:
-        col_sel, _ = st.columns([2, 2])
-        idx = col_sel.selectbox("Seleccione Alumno", df['id'].tolist(), 
-                                format_func=lambda x: f"{df[df['id']==x]['nombre'].values[0]} ({df[df['id']==x]['curso'].values[0]})")
+    if conn:
+        # Traemos alumnos con un diccionario para no errar en índices
+        df = pd.read_sql("SELECT id, nombre, curso FROM alumnos ORDER BY nombre", conn)
         
-        if idx:
-            with conn.cursor() as c:
-                c.execute("SELECT * FROM alumnos WHERE id=%s", (idx,))
+        if not df.empty:
+            sel_id = st.selectbox("Seleccione Alumno", df['id'].tolist(), 
+                                  format_func=lambda x: f"{df[df['id']==x]['nombre'].values[0]} ({df[df['id']==x]['curso'].values[0]})")
+            
+            # Traemos el registro completo como diccionario
+            with conn.cursor(cursor_factory=extras.DictCursor) as c:
+                c.execute("SELECT * FROM alumnos WHERE id=%s", (sel_id,))
                 d = c.fetchone()
             
-            # Usamos un formulario para agrupar todo
-            with st.form("form_notas_final"):
-                st.markdown(f"### 🧑‍🎓 Estudiante: **{d[1]}**")
-                
-                nuevos_datos = []
-                
-                # Renderizamos las 10 instancias
-                for i in range(10):
-                    with st.container():
-                        c_fec, c_not, c_apr = st.columns([1.5, 3, 1])
+            if d:
+                with st.form("form_notas"):
+                    st.markdown(f"### Estudiante: **{d['nombre']}**")
+                    nuevos_datos = []
+                    for i in range(1, 11):
+                        c1, c2, c3 = st.columns([1.5, 3, 1])
+                        # Acceso por nombre de columna para evitar errores de índice
+                        f_db = d[f'f{i}']
+                        f_ini = f_db if isinstance(f_db, (date, datetime)) else date.today()
                         
-                        # --- CAPA DE SEGURIDAD PARA FECHAS ---
-                        # Buscamos la fecha en la posición 29 + i (f1 es la col 29 en Postgres)
-                        try:
-                            f_raw = d[29 + i]
-                            # Si es un objeto date/datetime lo usamos, sino ponemos hoy
-                            f_val_init = f_raw if isinstance(f_raw, (date, datetime)) else date.today()
-                        except:
-                            f_val_init = date.today()
-
-                        # Widgets
-                        f_val = c_fec.date_input(f"📅 Fecha {i+1}", value=f_val_init, key=f"f{i}")
-                        n_val = c_not.text_input(f"🖋️ Nota {i+1}", value=d[8 + i*3] if d[8 + i*3] else "", key=f"n{i}")
-                        a_val = c_apr.checkbox("✅ APROBADO", value=(d[9 + i*3] == "S"), key=f"e{i}")
+                        f_val = c1.date_input(f"Fecha {i}", value=f_ini, key=f"f{i}")
+                        n_val = c2.text_input(f"Nota {i}", value=d[f'n{i}'] if d[f'n{i}'] else "", key=f"n{i}")
+                        a_val = c3.checkbox("APROBADO", value=(d[f'e{i}'] == "S"), key=f"e{i}")
                         
-                        # Guardamos para el UPDATE (Nota, Aprobado, Fecha)
                         nuevos_datos.extend([n_val, "S" if a_val else "N", f_val])
-                
-                st.markdown("---")
-                # El botón DEBE estar dentro del 'with st.form'
-                btn_guardar = st.form_submit_button("💾 GUARDAR TODA LA FICHA")
-                
-                if btn_guardar:
-                    with conn.cursor() as c_upd:
-                        q = """UPDATE alumnos SET 
-                               n1=%s, e1=%s, f1=%s, n2=%s, e2=%s, f2=%s, n3=%s, e3=%s, f3=%s, 
-                               n4=%s, e4=%s, f4=%s, n5=%s, e5=%s, f5=%s, n6=%s, e6=%s, f6=%s, 
-                               n7=%s, e7=%s, f7=%s, n8=%s, e8=%s, f8=%s, n9=%s, e9=%s, f9=%s, 
-                               n10=%s, e10=%s, f10=%s WHERE id=%s"""
-                        c_upd.execute(q, (*nuevos_datos, idx))
-                        conn.commit()
-                    st.success(f"✨ ¡Ficha de {d[1]} guardada!")
-                    st.balloons()
-                    st.rerun()
-    else:
-        st.info("No hay alumnos cargados.")
-    conn.close()
-    
+                    
+                    if st.form_submit_button("💾 Guardar Cambios"):
+                        with conn.cursor() as c_upd:
+                            q = "UPDATE alumnos SET " + ", ".join([f"n{i}=%s, e{i}=%s, f{i}=%s" for i in range(1, 11)]) + " WHERE id=%s"
+                            c_upd.execute(q, (*nuevos_datos, sel_id))
+                            conn.commit()
+                        st.success("¡Datos actualizados!")
+                        st.rerun()
+        else:
+            st.warning("No hay alumnos cargados. Por favor, ve a 'Cargar Alumno'.")
+        conn.close()
 
-# --- 2. GESTIÓN DEL SEGUIMIENTO (ENCUENTROS) ---
+# --- 2. GESTIÓN DE ENCUENTROS ---
 elif menu == "Gestión de Encuentros":
-    st.subheader("🤝 Gestión de Encuentros Detallados")
+    st.subheader("🤝 Seguimiento de Encuentros")
     conn = conectar()
-    alumnos_df = pd.read_sql("SELECT id, nombre, curso, division FROM alumnos ORDER BY nombre", conn)
-    
-    tab1, tab2 = st.tabs(["Cargar Encuentro", "Ver Historial y Acta"])
-    
-    with tab1:
-        with st.form("nuevo_encuentro"):
-            alumno_id = st.selectbox("Alumno", alumnos_df['id'].tolist(), 
-                                    format_func=lambda x: f"{alumnos_df[alumnos_df['id']==x]['nombre'].values[0]}")
-            fecha_e = st.date_input("Fecha", value=date.today())
-            objetivo = st.text_input("Objetivo")
-            obs = st.text_area("Observaciones (máx 2000 car.)", max_chars=2000)
-            if st.form_submit_button("Registrar"):
-                with conn.cursor() as c:
-                    c.execute("INSERT INTO seguimientos (alumno_id, fecha_encuentro, objetivo, observaciones) VALUES (%s,%s,%s,%s)",
-                              (alumno_id, fecha_e, objetivo, obs))
-                    conn.commit()
-                st.success("Encuentro registrado.")
+    if conn:
+        df_a = pd.read_sql("SELECT id, nombre FROM alumnos ORDER BY nombre", conn)
+        if not df_a.empty:
+            with st.form("nuevo_enc"):
+                a_id = st.selectbox("Alumno", df_a['id'].tolist(), format_func=lambda x: df_a[df_a['id']==x]['nombre'].values[0])
+                f_e = st.date_input("Fecha", value=date.today())
+                obj = st.text_input("Objetivo")
+                obs = st.text_area("Observaciones", max_chars=2000)
+                if st.form_submit_button("Registrar Encuentro"):
+                    with conn.cursor() as c:
+                        c.execute("INSERT INTO seguimientos (alumno_id, fecha_encuentro, objetivo, observaciones) VALUES (%s,%s,%s,%s)", (a_id, f_e, obj, obs))
+                        conn.commit()
+                    st.success("Encuentro registrado.")
+        else:
+            st.warning("Debe cargar alumnos primero.")
+        conn.close()
 
-    with tab2:
-        sel_id = st.selectbox("Seleccionar Alumno para Acta", alumnos_df['id'].tolist(), 
-                             format_func=lambda x: alumnos_df[alumnos_df['id']==x]['nombre'].values[0])
-        
-        encuentros = pd.read_sql(f"SELECT fecha_encuentro, objetivo, observaciones FROM seguimientos WHERE alumno_id={sel_id} ORDER BY fecha_encuentro DESC", conn)
-        
-        if not encuentros.empty:
-            alumno_info = alumnos_df[alumnos_df['id'] == sel_id].iloc[0]
-            acta = f"ACTA DE SEGUIMIENTO: {alumno_info['nombre'].upper()}\nCURSO: {alumno_info['curso']}\n{'='*40}\n\n"
-            
-            for _, row in encuentros.iterrows():
-                st.markdown(f"**Fecha:** {row['fecha_encuentro']} | **Objetivo:** {row['objetivo']}")
-                st.write(row['observaciones'])
-                st.markdown("---")
-                acta += f"FECHA: {row['fecha_encuentro']}\nOBJETIVO: {row['objetivo']}\nOBS: {row['observaciones']}\n{'-'*40}\n"
-
-            st.download_button("📥 Descargar Acta .txt", acta, file_name=f"Acta_{alumno_info['nombre']}.txt")
-    conn.close()
-
-# --- 3. BACKUP & DATOS (RESTABLECIDO) ---
-elif menu == "Backup & Datos":
-    st.subheader("💾 Backup y Restauración")
+# --- 3. FICHA Y REPORTES (CORRECCIÓN DEFINITIVA BYTES/PDF) ---
+elif menu == "Ficha y Reportes":
+    st.subheader("📊 Fichas Individuales y Reportes Generales")
     conn = conectar()
-    col1, col2 = st.columns(2)
     
-    with col1:
-        st.info("Genera un Excel con todos los datos de la base.")
-        if st.button("Generar Backup"):
-            df_total = pd.read_sql("SELECT * FROM alumnos", conn)
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df_total.to_excel(writer, index=False)
-            st.download_button("Descargar Excel", output.getvalue(), "backup_sistema.xlsx")
+    if conn:
+        tab1, tab2 = st.tabs(["📄 Ficha de Alumno (Individual)", "📋 Reporte General de Cursada"])
+
+        with tab1:
+            st.write("#### Generar Ficha Pedagógica Individual")
+            df_a = pd.read_sql("SELECT id, nombre, curso FROM alumnos ORDER BY nombre", conn)
+            if not df_a.empty:
+                sel_id = st.selectbox("Seleccione el Alumno para el PDF", df_a['id'].tolist(), 
+                                      format_func=lambda x: f"{df_a[df_a['id']==x]['nombre'].values[0]} ({df_a[df_a['id']==x]['curso'].values[0]})")
+                
+                if st.button("🖨️ Generar Ficha PDF"):
+                    try:
+                        with conn.cursor(cursor_factory=extras.DictCursor) as c:
+                            c.execute("SELECT * FROM alumnos WHERE id=%s", (sel_id,))
+                            a = c.fetchone()
+                            c.execute("SELECT fecha_encuentro, objetivo, observaciones FROM seguimientos WHERE alumno_id=%s ORDER BY fecha_encuentro", (sel_id,))
+                            encuentros = c.fetchall()
+
+                        pdf = PDF()
+                        pdf.add_page()
+                        
+                        # Limpieza de caracteres para evitar errores de encoding en el PDF
+                        def clean_text(t):
+                            return str(t).encode('latin-1', 'replace').decode('latin-1')
+
+                        pdf.set_fill_color(240, 240, 240)
+                        pdf.set_font('Arial', 'B', 12)
+                        pdf.cell(0, 10, f"FICHA DE SEGUIMIENTO: {clean_text(a['nombre']).upper()}", 1, 1, 'C', fill=True)
+                        pdf.ln(5)
+                        
+                        pdf.set_font('Arial', 'B', 10)
+                        pdf.cell(30, 8, "Curso:", 0); pdf.set_font('Arial', '', 10); pdf.cell(60, 8, clean_text(a['curso']), 0)
+                        pdf.set_font('Arial', 'B', 10); pdf.cell(30, 8, "Division:", 0); pdf.set_font('Arial', '', 10); pdf.cell(0, 8, clean_text(a['division']), 0, 1)
+                        
+                        pdf.ln(5)
+                        pdf.set_font('Arial', 'B', 11)
+                        pdf.cell(0, 10, "INSTANCIAS EVALUATIVAS", 0, 1, 'L')
+                        pdf.set_font('Arial', 'B', 9)
+                        pdf.cell(30, 8, "Fecha", 1); pdf.cell(120, 8, "Nota / Observacion", 1); pdf.cell(40, 8, "Estado", 1, 1)
+                        
+                        pdf.set_font('Arial', '', 9)
+                        for i in range(1, 11):
+                            if a[f'n{i}']:
+                                f_val = a[f'f{i}'].strftime("%d/%m/%Y") if a[f'f{i}'] else "-"
+                                est_val = "APROBADO" if a[f'e{i}'] == "S" else "PENDIENTE"
+                                pdf.cell(30, 8, f_val, 1)
+                                pdf.cell(120, 8, clean_text(a[f'n{i}'])[:70], 1)
+                                pdf.cell(40, 8, est_val, 1, 1)
+
+                        if encuentros:
+                            pdf.ln(10)
+                            pdf.set_font('Arial', 'B', 11)
+                            pdf.cell(0, 10, "DETALLE DE ENCUENTROS", 0, 1, 'L')
+                            for enc in encuentros:
+                                pdf.set_font('Arial', 'B', 9)
+                                pdf.cell(0, 8, f"Fecha: {enc[0].strftime('%d/%m/%Y')} - Obj: {clean_text(enc[1])}", "T", 1)
+                                pdf.set_font('Arial', '', 9)
+                                pdf.multi_cell(0, 6, f"Detalle: {clean_text(enc[2])}", 0)
+                                pdf.ln(2)
+
+                        # --- FIX CRÍTICO: Conversión explícita a bytes ---
+                        pdf_raw = pdf.output(dest='S')
+                        st.download_button(f"📥 Bajar PDF {a['nombre']}", bytes(pdf_raw), f"Ficha_{a['nombre']}.pdf", "application/pdf")                        
+
+                    except Exception as e:
+                        st.error(f"Error generando PDF: {e}")
+            else:
+                st.warning("No hay alumnos cargados.")
+
+        with tab2:
+            st.write("#### Filtros de Reporte General")
+            c1, c2, c3, c4 = st.columns(4)
+            f_cur = c1.text_input("Curso", key="rep_cur")
+            f_div = c2.text_input("División", key="rep_div")
+            f_mat = c3.text_input("Materia", key="rep_mat")
+            f_est = c4.selectbox("Estado", ["TODOS", "APROBADO", "PENDIENTE"], key="rep_est")
+
+            query = "SELECT nombre, curso, division, tercera_materia, profesor, estado FROM alumnos WHERE 1=1"
+            params = []
+            if f_cur: query += " AND curso ILIKE %s"; params.append(f"%{f_cur}%")
+            if f_div: query += " AND division ILIKE %s"; params.append(f"%{f_div}%")
+            if f_mat: query += " AND tercera_materia ILIKE %s"; params.append(f"%{f_mat}%")
             
-    with col2:
-        st.write("#### Restaurar desde Excel")
-        file = st.file_uploader("Subir .xlsx para importar", type=["xlsx"], key="restaurador")
-        if file and st.button("Confirmar Sobreescritura"):
-            try:
-                df_in = pd.read_excel(file).fillna("")
+            df_reporte = pd.read_sql(query, conn, params=params)
+            if f_est != "TODOS":
+                df_reporte = df_reporte[df_reporte['estado'] == f_est]
+
+            st.dataframe(df_reporte, use_container_width=True)
+
+            if not df_reporte.empty:
+                if st.button("📊 Generar Reporte General PDF"):
+                    try:
+                        pdf_rep = PDF()
+                        pdf_rep.add_page()
+                        pdf_rep.set_font('Arial', 'B', 14)
+                        pdf_rep.cell(0, 10, "REPORTE GENERAL - ESTADO DE ALUMNOS", 0, 1, 'C')
+                        pdf_rep.ln(5)
+                        
+                        pdf_rep.set_font('Arial', 'B', 9)
+                        pdf_rep.set_fill_color(200, 220, 255)
+                        pdf_rep.cell(60, 10, "Alumno", 1, 0, 'C', True)
+                        pdf_rep.cell(30, 10, "Curso/Div", 1, 0, 'C', True)
+                        pdf_rep.cell(60, 10, "Materia", 1, 0, 'C', True)
+                        pdf_rep.cell(30, 10, "Estado", 1, 1, 'C', True)
+
+                        pdf_rep.set_font('Arial', '', 8)
+                        for _, r in df_reporte.iterrows():
+                            pdf_rep.cell(60, 8, clean_text(r['nombre'])[:30], 1)
+                            pdf_rep.cell(30, 8, f"{r['curso']} {r['division']}", 1, 0, 'C')
+                            pdf_rep.cell(60, 8, clean_text(r['tercera_materia'])[:30], 1)
+                            pdf_rep.cell(30, 8, str(r['estado']), 1, 1, 'C')
+
+                        # --- FIX CRÍTICO: Conversión explícita a bytes ---
+                        pdf_rep_raw = pdf_rep.output(dest='S')
+                        st.download_button("📥 Bajar Reporte", bytes(pdf_rep_raw), "Reporte.pdf", "application/pdf")
+                        
+                    except Exception as e:
+                        st.error(f"Error generando Reporte: {e}")
+        conn.close()
+
+# --- 4. CARGAR ALUMNO ---
+elif menu == "Cargar Alumno":
+    st.subheader("➕ Alta de Alumno")
+    with st.form("alta"):
+        nom = st.text_input("Nombre y Apellido")
+        cur = st.text_input("Curso")
+        div = st.text_input("División")
+        if st.form_submit_button("Guardar"):
+            if nom and cur:
                 conn = conectar()
                 with conn.cursor() as c:
-                    # AQUÍ ESTABA EL ERROR: Aseguramos que la sentencia sea completa
-                    c.execute("TRUNCATE TABLE alumnos RESTART IDENTITY CASCADE")
-                    
-                    # Preparamos las columnas y los placeholders dinámicos
-                    cols = ",".join(df_in.columns)
-                    placeholders = ",".join(["%s"] * len(df_in.columns))
-                    query = f"INSERT INTO alumnos ({cols}) VALUES ({placeholders})"
-                    
-                    # Carga masiva
-                    extras.execute_values(c, f"INSERT INTO alumnos ({cols}) VALUES %s", [tuple(x) for x in df_in.values])
+                    c.execute("INSERT INTO alumnos (nombre, curso, division) VALUES (%s,%s,%s)", (nom, cur, div))
                     conn.commit()
-                st.success("✅ Base de datos restaurada con éxito.")
-                st.rerun()
-            except Exception as e:
-                st.error(f"❌ Error en la restauración: {str(e)}")
-            finally:
-                if conn: conn.close()
+                st.success(f"{nom} registrado.")
+                conn.close()
+            else:
+                st.error("Nombre y Curso son obligatorios.")
+
+# --- 5. BACKUP ---
+elif menu == "Backup & Datos":
+    st.subheader("💾 Gestión de Datos")
+    conn = conectar()
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Generar Backup"):
+            df_back = pd.read_sql("SELECT * FROM alumnos", conn)
+            buf = io.BytesIO()
+            with pd.ExcelWriter(buf, engine='openpyxl') as w:
+                df_back.to_excel(w, index=False)
+            st.download_button("📥 Descargar Excel", buf.getvalue(), "backup_alumnos.xlsx")
+    with col2:
+        file = st.file_uploader("Subir Excel para restaurar", type=["xlsx"])
+        if file and st.button("Confirmar Restauración"):
+            df_in = pd.read_excel(file).fillna("")
+            with conn.cursor() as c:
+                c.execute("TRUNCATE TABLE alumnos RESTART IDENTITY CASCADE")
+                cols = ",".join(df_in.columns)
+                extras.execute_values(c, f"INSERT INTO alumnos ({cols}) VALUES %s", [tuple(x) for x in df_in.values])
+                conn.commit()
+            st.success("Restauración completa.")
+    conn.close()
