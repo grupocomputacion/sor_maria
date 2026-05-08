@@ -52,7 +52,7 @@ def init_db():
 init_db()
 
 # --- NAVEGACIÓN ---
-menu = st.sidebar.radio("MENÚ PRINCIPAL", ["Seguimiento de Notas", "Gestión de Encuentros", "Ficha y Reportes", "Cargar Alumno", "Backup & Datos"])
+menu = st.sidebar.radio("MENÚ PRINCIPAL", ["Seguimiento de Notas", "Gestión de Encuentros", "Ficha y Reportes", "Cargar Alumno", "Modificar Alumno", "Backup & Datos"])
 
 # --- 1. SEGUIMIENTO DE NOTAS ---
 if menu == "Seguimiento de Notas":
