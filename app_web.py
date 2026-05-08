@@ -289,7 +289,56 @@ elif menu == "Cargar Alumno":
             else:
                 st.error("Nombre y Curso son obligatorios.")
 
-# --- 5. BACKUP ---
+# --- 5. MODIFICAR ALUMNO ---
+elif menu == "Modificar Alumno":
+    st.subheader("📝 Modificar Datos de Alumno")
+    
+    # 1. Buscador para elegir al alumno
+    nombre_buscar = st.text_input("Buscar alumno por nombre para editar")
+    
+    if nombre_buscar:
+        conn = conectar()
+        with conn.cursor() as c:
+            # Buscamos coincidencias
+            c.execute("SELECT id, nombre, curso, tercera_materia, estado_general FROM alumnos WHERE nombre ILIKE %s", (f"%{nombre_buscar}%",))
+            resultados = c.fetchall()
+        
+        if resultados:
+            # Creamos un diccionario para el selectbox
+            opciones = {f"{r[1]} ({r[2]})": r[0] for r in resultados}
+            seleccion = st.selectbox("Seleccioná el alumno exacto:", list(opciones.keys()))
+            id_alumno = opciones[seleccion]
+
+            # Traemos los datos actuales del alumno elegido
+            alumno_actual = next(r for r in resultados if r[0] == id_alumno)
+
+            # 2. Formulario de edición
+            with st.form("form_edicion"):
+                st.info(f"Editando a: {alumno_actual[1]}")
+                
+                # Campos a modificar
+                nueva_materia = st.text_input("Tercera Materia seleccionada", value=alumno_actual[3] if alumno_actual[3] else "")
+                nuevo_estado = st.selectbox("Estado de la materia", 
+                                          ["Pendiente", "Aprobada", "No Aprobada", "En Curso"],
+                                          index=["Pendiente", "Aprobada", "No Aprobada", "En Curso"].index(alumno_actual[4]) if alumno_actual[4] in ["Pendiente", "Aprobada", "No Aprobada", "En Curso"] else 0)
+
+                if st.form_submit_button("Actualizar Registro"):
+                    with conn.cursor() as c:
+                        # La QUERY de actualización (UPDATE)
+                        sql_update = """
+                            UPDATE alumnos 
+                            SET tercera_materia = %s, 
+                                estado_general = %s 
+                            WHERE id = %s
+                        """
+                        c.execute(sql_update, (nueva_materia, nuevo_estado, id_alumno))
+                        conn.commit()
+                    st.success("✅ Datos actualizados correctamente en la base de datos.")
+        else:
+            st.warning("No se encontraron alumnos con ese nombre.")
+        conn.close()
+
+# --- 6. BACKUP ---
 elif menu == "Backup & Datos":
     st.subheader("💾 Gestión de Datos")
     conn = conectar()
