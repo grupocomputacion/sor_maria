@@ -248,17 +248,44 @@ elif menu == "Ficha y Reportes":
 elif menu == "Cargar Alumno":
     st.subheader("➕ Alta de Alumno")
     with st.form("alta"):
-        nom = st.text_input("Nombre y Apellido")
-        cur = st.text_input("Curso")
-        div = st.text_input("División")
+        # Datos básicos
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            nom = st.text_input("Nombre y Apellido")
+        with col2:
+            cur = st.text_input("Curso")
+        with col3:
+            div = st.text_input("División")
+        
+        # Datos de materias (Lo que faltaba)
+        st.markdown("---")
+        st.write("📚 **Información Académica**")
+        mat_adeuda = st.text_area("Materias que adeudaba (Ciclos anteriores)")
+        tercera_mat = st.text_input("Tercera Materia elegida")
+        
+        estado_gen = st.selectbox("Estado General de la Materia", 
+                                 ["Pendiente", "Aprobada", "No Aprobada", "En Curso"])
+
         if st.form_submit_button("Guardar"):
             if nom and cur:
                 conn = conectar()
-                with conn.cursor() as c:
-                    c.execute("INSERT INTO alumnos (nombre, curso, division) VALUES (%s,%s,%s)", (nom, cur, div))
-                    conn.commit()
-                st.success(f"{nom} registrado.")
-                conn.close()
+                if conn:
+                    try:
+                        with conn.cursor() as c:
+                            # Actualizamos el INSERT con las nuevas columnas
+                            sql = """
+                                INSERT INTO alumnos 
+                                (nombre, curso, division, materias_adeudadas, tercera_materia, estado_general) 
+                                VALUES (%s, %s, %s, %s, %s, %s)
+                            """
+                            valores = (nom, cur, div, mat_adeuda, tercera_mat, estado_gen)
+                            c.execute(sql, valores)
+                            conn.commit()
+                        st.success(f"✅ {nom} registrado con éxito.")
+                    except Exception as e:
+                        st.error(f"Error al insertar: {e}")
+                    finally:
+                        conn.close()
             else:
                 st.error("Nombre y Curso son obligatorios.")
 
