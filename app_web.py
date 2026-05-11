@@ -184,9 +184,18 @@ elif menu == "Ficha y Reportes":
                                 pdf.multi_cell(0, 6, f"Detalle: {clean_text(enc[2])}", 0)
                                 pdf.ln(2)
 
-                        # --- FIX CRÍTICO: Conversión explícita a bytes ---
-                        pdf_raw = pdf.output(dest='S')
-                        st.download_button(f"📥 Bajar PDF {a['nombre']}", bytes(pdf_raw), f"Ficha_{a['nombre']}.pdf", "application/pdf")                        
+                            # --- FIX SEGURO ---
+                            pdf_raw = pdf.output(dest='S')
+                            # Si pdf_raw es string, lo encodamos. Si ya es bytes, lo dejamos pasar.
+                            if isinstance(pdf_raw, str):
+                                pdf_raw = pdf_raw.encode('latin-1')
+
+                            st.download_button(
+                                label=f"📥 Bajar PDF {a['nombre']}", 
+                                data=pdf_raw, 
+                                file_name=f"Ficha_{a['nombre']}.pdf", 
+                                mime="application/pdf"
+                            )                       
 
                     except Exception as e:
                         st.error(f"Error generando PDF: {e}")
@@ -236,10 +245,17 @@ elif menu == "Ficha y Reportes":
                             pdf_rep.cell(60, 8, clean_text(r['tercera_materia'])[:30], 1)
                             pdf_rep.cell(30, 8, str(r['estado']), 1, 1, 'C')
 
-                        # --- FIX CRÍTICO: Conversión explícita a bytes ---
+                        # --- FIX SEGURO ---
                         pdf_rep_raw = pdf_rep.output(dest='S')
-                        st.download_button("📥 Bajar Reporte", bytes(pdf_rep_raw), "Reporte.pdf", "application/pdf")
-                        
+                        if isinstance(pdf_rep_raw, str):
+                            pdf_rep_raw = pdf_rep_raw.encode('latin-1')
+
+                        st.download_button(
+                            label="📥 Bajar Reporte", 
+                            data=pdf_rep_raw, 
+                            file_name="Reporte.pdf", 
+                            mime="application/pdf"
+                        )
                     except Exception as e:
                         st.error(f"Error generando Reporte: {e}")
         conn.close()
