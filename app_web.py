@@ -71,46 +71,46 @@ if menu == "Seguimiento de Notas":
                 d = c.fetchone()
             
             if d:
-                # No usamos clear_on_submit para que no borre lo que acabamos de escribir antes de procesar
-                with st.form(key=f"form_notas_v3_{sel_id}"):
+                with st.form(key=f"form_notas_pro_{sel_id}"):
                     st.markdown(f"### Estudiante: **{d['nombre']}**")
-                    st.info("💡 Para borrar una fecha, simplemente deja el campo de texto vacío.")
+                    st.caption("💡 Si no querés registrar fecha, destildá el cuadro '¿Cargar?'")
                     
                     for i in range(1, 11):
-                        c1, c2, c3 = st.columns([2, 3, 1])
+                        # Agregamos una columna pequeña para el "borrador" (checkbox)
+                        c_del, c_date, c_note, c_chk = st.columns([0.7, 1.5, 3, 1])
                         
                         f_db = d[f'f{i}']
-                        # Convertimos la fecha de la DB a string DD/MM/YYYY o dejamos vacío
-                        f_str = f_db.strftime("%d/%m/%Y") if f_db else ""
                         n_db = d[f'n{i}'] if d[f'n{i}'] else ""
                         e_db = (d[f'e{i}'] == "S")
                         
-                        # Usamos text_input para permitir que esté VACÍO (la "X" de limpieza manual)
-                        f_val = c1.text_input(f"Fecha {i} (DD/MM/AAAA)", value=f_str, key=f"f{i}_{sel_id}")
+                        # 1. El Checkbox actúa como la "X". Si está tildado, hay fecha. Si no, es NULL.
+                        tiene_fecha = c_del.checkbox("¿Cargar?", value=(f_db is not None), key=f"active_{i}_{sel_id}")
                         
-                        n_val = c2.text_input(f"Nota {i}", value=n_db, key=f"n{i}_{sel_id}")
+                        # 2. El Calendario (date_input) vuelve para tu comodidad
+                        f_val = c_date.date_input(
+                            f"Fecha {i}", 
+                            value=f_db if f_db else date.today(), 
+                            key=f"f_{i}_{sel_id}",
+                            label_visibility="collapsed" # Para que quede más estético
+                        )
                         
-                        a_val = c3.checkbox("APROBADO", value=e_db, key=f"e{i}_{sel_id}")
+                        # 3. Nota y Aprobado
+                        n_val = c_note.text_input(f"Nota {i}", value=n_db, key=f"n_{i}_{sel_id}", label_visibility="collapsed")
+                        a_val = c_chk.checkbox("APROBADO", value=e_db, key=f"e_{i}_{sel_id}")
 
                     if st.form_submit_button("💾 Guardar Cambios"):
                         try:
                             valores_finales = []
                             for i in range(1, 11):
-                                # 1. Procesar Fecha
-                                fecha_texto = st.session_state[f"f{i}_{sel_id}"].strip()
-                                fecha_final = None
+                                # Lógica de guardado:
+                                # Si el checkbox 'active' está apagado, mandamos None (NULL)
+                                if st.session_state[f"active_{i}_{sel_id}"]:
+                                    fecha_final = st.session_state[f"f_{i}_{sel_id}"]
+                                else:
+                                    fecha_final = None
                                 
-                                if fecha_texto:
-                                    try:
-                                        # Intentamos convertir el texto a objeto date
-                                        fecha_final = datetime.strptime(fecha_texto, "%d/%m/%Y").date()
-                                    except ValueError:
-                                        st.error(f"Formato de fecha incorrecto en fila {i}. Use DD/MM/AAAA")
-                                        st.stop()
-                                
-                                # 2. Resto de campos
-                                nota = st.session_state[f"n{i}_{sel_id}"]
-                                aprobado = "S" if st.session_state[f"e{i}_{sel_id}"] else "N"
+                                nota = st.session_state[f"n_{i}_{sel_id}"]
+                                aprobado = "S" if st.session_state[f"e_{i}_{sel_id}"] else "N"
                                 
                                 valores_finales.extend([nota, aprobado, fecha_final])
 
@@ -119,15 +119,14 @@ if menu == "Seguimiento de Notas":
                                 c_upd.execute(q, (*valores_finales, sel_id))
                                 conn.commit()
                             
-                            st.success(f"✅ ¡Registro de {d['nombre']} actualizado con éxito!")
+                            st.success(f"✅ ¡Registro de {d['nombre']} actualizado!")
                             st.rerun()
 
                         except Exception as e:
-                            st.error(f"Error al actualizar en Neon: {e}")
+                            st.error(f"Error al guardar: {e}")
         else:
             st.warning("No hay alumnos cargados.")
         conn.close()
-
 
 # --- 2. GESTIÓN DE ENCUENTROS ---
 elif menu == "Gestión de Encuentros":
