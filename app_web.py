@@ -59,61 +59,73 @@ if menu == "Seguimiento de Notas":
     st.subheader("📝 Instancias de Evaluación")
     conn = conectar()
     if conn:
-        # Traemos alumnos
+        # Traemos alumnos actualizados
         df = pd.read_sql("SELECT id, nombre, curso FROM alumnos ORDER BY nombre", conn)
         
         if not df.empty:
             sel_id = st.selectbox("Seleccione Alumno", df['id'].tolist(), 
                                   format_func=lambda x: f"{df[df['id']==x]['nombre'].values[0]} ({df[df['id']==x]['curso'].values[0]})")
             
-            # Traemos el registro completo
+            # Traemos el registro completo del alumno seleccionado
             with conn.cursor(cursor_factory=extras.DictCursor) as c:
                 c.execute("SELECT * FROM alumnos WHERE id=%s", (sel_id,))
                 d = c.fetchone()
             
             if d:
-                # Usamos un formulario para agrupar los cambios
-                with st.form("form_notas", clear_on_submit=True):
+                # quitamos clear_on_submit para asegurar que los valores se capturen bien
+                with st.form("form_notas"):
                     st.markdown(f"### Estudiante: **{d['nombre']}**")
-                    st.info("Nota: Las fechas vacías se guardarán como nulas.")
                     
-                    nuevos_datos = []
-                    
+                    # Usamos una lista para recolectar los valores FUERA del loop del submit
                     for i in range(1, 11):
                         c1, c2, c3 = st.columns([1.5, 3, 1])
                         
-                        # 1. LOGICA DE FECHA: Si en DB es None, mostramos vacío (None)
+                        # Recuperamos valores actuales de la base de datos
                         f_db = d[f'f{i}']
-                        # Para que date_input permita estar vacío, usamos value=f_db (siendo None o fecha)
-                        # Nota: Si tu versión de Streamlit es antigua, usará date.today() por defecto.
-                        f_val = c1.date_input(f"Fecha {i}", value=f_db, key=f"f{i}", help="Seleccione fecha")
+                        n_db = d[f'n{i}'] if d[f'n{i}'] else ""
+                        e_db = (d[f'e{i}'] == "S")
                         
-                        # 2. LOGICA DE NOTA
-                        n_val = c2.text_input(f"Nota/Obs {i}", value=d[f'n{i}'] if d[f'n{i}'] else "", key=f"n{i}")
-                        
-                        # 3. LOGICA DE ESTADO (Checkbox)
-                        a_val = c3.checkbox("APROBADO", value=(d[f'e{i}'] == "S"), key=f"e{i}")
-                        
-                        # Armamos la lista para el UPDATE
-                        nuevos_datos.extend([n_val, "S" if a_val else "N", f_val])
-                    
-                    if st.form_submit_button("💾 Guardar y Limpiar"):
-                        try:
-                            with conn.cursor() as c_upd:
-                                # Construimos la query dinámicamente
-                                q = "UPDATE alumnos SET " + ", ".join([f"n{i}=%s, e{i}=%s, f{i}=%s" for i in range(1, 11)]) + " WHERE id=%s"
-                                c_upd.execute(q, (*nuevos_datos, sel_id))
-                                conn.commit()
+                        # Widgets
+                        # Si f_db es None, date_input mostrará la fecha de hoy por defecto, 
+                        # pero al guardar, si no se cambió, podemos decidir si guardarla o no.
+                        f_val = c1.date_input(f"Fecha {i}", value=f_db if f_db else date.today(), key=f"f{i}")
+                        n_val = c2.text_input(f"Nota/Obs {i}", value=n_db, key=f"n{i}")
+                        a_val = c3.checkbox("APROBADO", value=e_db, key=f"e{i}")
+
+                    # Botón de envío
+                    enviar = st.form_submit_button("💾 Guardar Cambios")
+
+                if enviar:
+                    try:
+                        # Recolectamos los datos de los widgets usando sus llaves (keys)
+                        # Esto es más seguro dentro de un form de Streamlit
+                        datos_a_actualizar = []
+                        for i in range(1, 11):
+                            # Obtenemos el valor directamente del estado de la sesión
+                            nota = st.session_state[f"n{i}"]
+                            aprobado = "S" if st.session_state[f"e{i}"] else "N"
+                            fecha = st.session_state[f"f{i}"]
                             
-                            st.success(f"✅ Notas de {d['nombre']} actualizadas.")
-                            # st.rerun() limpia los estados de los widgets y recarga la info fresca
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Error al guardar en Neon: {e}")
+                            datos_a_actualizar.extend([nota, aprobado, fecha])
+
+                        with conn.cursor() as c_upd:
+                            # Construimos la query
+                            columnas_sql = ", ".join([f"n{i}=%s, e{i}=%s, f{i}=%s" for i in range(1, 11)])
+                            q = f"UPDATE alumnos SET {columnas_sql} WHERE id=%s"
+                            
+                            c_upd.execute(q, (*datos_a_actualizar, sel_id))
+                            conn.commit()
+                        
+                        st.success(f"✅ ¡Datos de {d['nombre']} guardados en Neon!")
+                        # El rerun es vital para que el selectbox y los inputs muestren la info nueva
+                        st.rerun()
+                        
+                    except Exception as e:
+                        conn.rollback()
+                        st.error(f"Error al guardar: {e}")
         else:
             st.warning("No hay alumnos cargados.")
         conn.close()
-
 # --- 2. GESTIÓN DE ENCUENTROS ---
 elif menu == "Gestión de Encuentros":
     st.subheader("🤝 Seguimiento de Encuentros")
