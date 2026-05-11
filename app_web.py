@@ -55,80 +55,168 @@ init_db()
 menu = st.sidebar.radio("MENÚ PRINCIPAL", ["Seguimiento de Notas", "Gestión de Encuentros", "Ficha y Reportes", "Cargar Alumno", "Modificar Alumno", "Backup & Datos"])
 
 
-# --- 1. SEGUIMIENTO DE NOTAS ---
 if menu == "Seguimiento de Notas":
     st.subheader("📝 Instancias de Evaluación")
     conn = conectar()
     if conn:
         df = pd.read_sql("SELECT id, nombre, curso FROM alumnos ORDER BY nombre", conn)
-        
+
         if not df.empty:
-            sel_id = st.selectbox("Seleccione Alumno", df['id'].tolist(), 
-                                  format_func=lambda x: f"{df[df['id']==x]['nombre'].values[0]} ({df[df['id']==x]['curso'].values[0]})")
-            
+            # ── Selector de alumno ──────────────────────────────────────────
+            sel_id = st.selectbox(
+                "Seleccione Alumno",
+                df["id"].tolist(),
+                format_func=lambda x: (
+                    f"{df[df['id']==x]['nombre'].values[0]} "
+                    f"({df[df['id']==x]['curso'].values[0]})"
+                ),
+                key="selector_alumno",
+            )
+
+            # ── Detectar cambio de alumno y limpiar estado ──────────────────
+            if st.session_state.get("alumno_activo") != sel_id:
+                for i in range(1, 11):
+                    for sufijo in ("act", "f", "n", "e"):
+                        k = f"{sufijo}_{i}"
+                        if k in st.session_state:
+                            del st.session_state[k]
+                st.session_state["alumno_activo"] = sel_id
+
+            # ── Leer datos del alumno desde DB ──────────────────────────────
             with conn.cursor(cursor_factory=extras.DictCursor) as c:
                 c.execute("SELECT * FROM alumnos WHERE id=%s", (sel_id,))
                 d = c.fetchone()
-            
+
             if d:
-                # El formulario se identifica por el ID del alumno para resetear estados al cambiar de persona
-                with st.form(key=f"form_notas_final_{sel_id}"):
-                    st.markdown(f"### Estudiante: **{d['nombre']}**")
-                    
-                    for i in range(1, 11):
-                        c_chk, c_date, c_note, c_aprob = st.columns([0.8, 1.8, 3, 1])
-                        
-                        f_db = d[f'f{i}']
-                        n_db = d[f'n{i}'] if d[f'n{i}'] else ""
-                        e_db = (d[f'e{i}'] == "S")
-                        
-                        # 1. El Checkbox define si la fecha "existe" o es NULL
-                        # Si f_db tiene algo, el checkbox arranca tildado
-                        activar = c_chk.checkbox("¿Cargar?", value=(f_db is not None), key=f"act_{i}_{sel_id}")
-                        
-                        if activar:
-                            # SI ESTÁ ACTIVO: Mostramos el calendario. 
-                            # Si ya había una fecha en la DB, la respeta (sea pasada o futura).
-                            # Si es nuevo, pone hoy por defecto para que elijas.
-                            f_val = c_date.date_input(
-                                f"Fecha {i}", 
-                                value=f_db if f_db else date.today(), 
-                                key=f"f_{i}_{sel_id}",
-                                label_visibility="collapsed"
+                st.markdown(f"### Estudiante: **{d['nombre']}** — {d['curso']}")
+
+                # ── Inicializar session_state con valores de DB ─────────────
+                # Solo si no existen aún (no pisamos ediciones del usuario)
+                for i in range(1, 11):
+                    if f"act_{i}" not in st.session_state:
+                        st.session_state[f"act_{i}"] = d[f"f{i}"] is not None
+                    if f"f_{i}" not in st.session_state:
+                        st.session_state[f"f_{i}"] = d[f"f{i}"] if d[f"f{i}"] else None
+                    if f"n_{i}" not in st.session_state:
+                        st.session_state[f"n_{i}"] = d[f"n{i}"] or ""
+                    if f"e_{i}" not in st.session_state:
+                        st.session_state[f"e_{i}"] = d[f"e{i}"] == "S"
+
+                # ── Encabezado ──────────────────────────────────────────────
+                h0,h1,h2,h3,h4,h5 = st.columns([0.4, 0.7, 1.8, 3.2, 1.0, 0.9])
+                for col, txt in zip(
+                    [h0,h1,h2,h3,h4,h5],
+                    ["**#**","**Cargar**","**Fecha**","**Observaciones**","**Aprobado**","**Limpiar**"],
+                ):
+                    col.markdown(txt)
+                st.divider()
+
+                # ── Filas reactivas (sin form) ──────────────────────────────
+                for i in range(1, 11):
+                    c0,c1,c2,c3,c4,c5 = st.columns([0.4, 0.7, 1.8, 3.2, 1.0, 0.9])
+
+                    c0.markdown(
+                        f"<div style='padding-top:8px'><b>{i}</b></div>",
+                        unsafe_allow_html=True
+                    )
+
+                    activar = c1.checkbox(
+                        "Cargar",
+                        value=st.session_state[f"act_{i}"],
+                        key=f"act_{i}",
+                        label_visibility="collapsed",
+                    )
+
+                    if activar:
+                        f_guardada = st.session_state[f"f_{i}"]
+                        c2.date_input(
+                            f"Fecha {i}",
+                            value=f_guardada if f_guardada else date.today(),
+                            key=f"f_{i}",
+                            label_visibility="collapsed",
+                            format="DD/MM/YYYY",
+                        )
+                    else:
+                        c2.markdown(
+                            "<div style='color:#aaa;padding-top:8px;font-size:0.9em;'>"
+                            "dd/mm/aaaa</div>",
+                            unsafe_allow_html=True,
+                        )
+
+                    c3.text_input(
+                        f"Nota {i}",
+                        value=st.session_state[f"n_{i}"],
+                        key=f"n_{i}",
+                        label_visibility="collapsed",
+                        placeholder="Observaciones...",
+                    )
+
+                    c4.checkbox(
+                        "Aprobado",
+                        value=st.session_state[f"e_{i}"],
+                        key=f"e_{i}",
+                        label_visibility="collapsed",
+                    )
+
+                    # Limpiar fila individual
+                    if c5.button("🗑️", key=f"limpiar_{i}", help=f"Limpiar fila {i}"):
+                        st.session_state[f"act_{i}"] = False
+                        st.session_state[f"f_{i}"]   = None
+                        st.session_state[f"n_{i}"]   = ""
+                        st.session_state[f"e_{i}"]   = False
+                        st.rerun()
+
+                st.divider()
+
+                # ── Botones principales ─────────────────────────────────────
+                b1, b2, _ = st.columns([2, 2, 5])
+
+                if b1.button("💾 Guardar", use_container_width=True, type="primary"):
+                    try:
+                        valores = []
+                        for i in range(1, 11):
+                            activado = st.session_state[f"act_{i}"]
+                            fecha    = st.session_state[f"f_{i}"] if activado else None
+                            nota     = st.session_state[f"n_{i}"]
+                            aprobado = "S" if st.session_state[f"e_{i}"] else "N"
+                            valores.extend([nota, aprobado, fecha])
+
+                        with conn.cursor() as c_upd:
+                            q = (
+                                "UPDATE alumnos SET "
+                                + ", ".join([f"n{i}=%s, e{i}=%s, f{i}=%s" for i in range(1, 11)])
+                                + " WHERE id=%s"
                             )
-                        else:
-                            # SI NO ESTÁ ACTIVO: Mostramos un visual de "vacío"
-                            c_date.markdown("<div style='color: gray; padding-top: 5px;'>dd/mm/aaaa</div>", unsafe_allow_html=True)
-                            f_val = None
-                        
-                        n_val = c_note.text_input(f"Nota {i}", value=n_db, key=f"n_{i}_{sel_id}", label_visibility="collapsed", placeholder="Notas...")
-                        a_val = c_aprob.checkbox("APROBADO", value=e_db, key=f"e_{i}_{sel_id}")
+                            c_upd.execute(q, (*valores, sel_id))
+                            conn.commit()
 
-                    if st.form_submit_button("💾 Guardar Cambios"):
-                        try:
-                            valores = []
-                            for i in range(1, 11):
-                                # Verificamos el checkbox de activación de esa fila
-                                if st.session_state[f"act_{i}_{sel_id}"]:
-                                    # Si está activo, capturamos la fecha del calendario (aunque sea pasada o futura)
-                                    fecha = st.session_state[f"f_{i}_{sel_id}"]
-                                else:
-                                    fecha = None # Borra la fecha en Neon
-                                
-                                nota = st.session_state[f"n_{i}_{sel_id}"]
-                                aprobado = "S" if st.session_state[f"e_{i}_{sel_id}"] else "N"
-                                valores.extend([nota, aprobado, fecha])
+                        st.success(f"Datos de **{d['nombre']}** guardados correctamente.")
 
-                            with conn.cursor() as c_upd:
-                                q = "UPDATE alumnos SET " + ", ".join([f"n{i}=%s, e{i}=%s, f{i}=%s" for i in range(1, 11)]) + " WHERE id=%s"
-                                c_upd.execute(q, (*valores, sel_id))
-                                conn.commit()
-                            
-                            st.success(f"✅ ¡Datos de {d['nombre']} actualizados!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Error al guardar: {e}")
+                        # Limpiar estado para recargar desde DB
+                        for i in range(1, 11):
+                            for sufijo in ("act", "f", "n", "e"):
+                                k = f"{sufijo}_{i}"
+                                if k in st.session_state:
+                                    del st.session_state[k]
+                        if "alumno_activo" in st.session_state:
+                            del st.session_state["alumno_activo"]
+
+                        st.rerun()
+
+                    except Exception as e:
+                        st.error(f"Error al guardar: {e}")
+
+                if b2.button("🧹 Limpiar todo", use_container_width=True):
+                    for i in range(1, 11):
+                        st.session_state[f"act_{i}"] = False
+                        st.session_state[f"f_{i}"]   = None
+                        st.session_state[f"n_{i}"]   = ""
+                        st.session_state[f"e_{i}"]   = False
+                    st.rerun()
+
         conn.close()
+
+
 
 # --- 2. GESTIÓN DE ENCUENTROS ---
 elif menu == "Gestión de Encuentros":
