@@ -307,7 +307,7 @@ elif menu == "Ficha y Reportes":
 
         conn.close()
 
-# --- 4. CARGAR ALUMNO ---
+# --- 4. CARGAR ALUMNOS ---
 elif menu == "Cargar Alumno":
     st.subheader("➕ Alta de Alumno")
     with st.form("alta"):
@@ -320,14 +320,18 @@ elif menu == "Cargar Alumno":
         with col3:
             div = st.text_input("División")
         
-        # Datos de materias (Lo que faltaba)
+        # Datos de materias
         st.markdown("---")
         st.write("📚 **Información Académica**")
         mat_adeuda = st.text_area("Materias que adeudaba (Ciclos anteriores)")
-        tercera_mat = st.text_input("Tercera Materia elegida")
         
-        estado_gen = st.selectbox("Estado General de la Materia", 
-                                 ["Pendiente", "Aprobada", "No Aprobada", "En Curso"])
+        col_m1, col_m2 = st.columns(2)
+        with col_m1:
+            tercera_mat = st.text_input("Tercera Materia elegida")
+            profesor = st.text_input("Profesor de la materia") # NUEVO CAMPO
+        with col_m2:
+            modalidad = st.selectbox("Modalidad de examen", ["Materia Completa", "Por Temas", "Trabajo Práctico"]) # NUEVO CAMPO
+            estado_gen = st.selectbox("Estado General", ["Pendiente", "Aprobada", "No Aprobada", "En Curso"])
 
         if st.form_submit_button("Guardar"):
             if nom and cur:
@@ -335,13 +339,13 @@ elif menu == "Cargar Alumno":
                 if conn:
                     try:
                         with conn.cursor() as c:
-                            # Actualizamos el INSERT con las nuevas columnas
+                            # Agregamos 'profesor' y 'modalidad' al INSERT
                             sql = """
                                 INSERT INTO alumnos 
-                                (nombre, curso, division, materias_adeudadas, tercera_materia, estado_general) 
-                                VALUES (%s, %s, %s, %s, %s, %s)
+                                (nombre, curso, division, materias_adeudadas, tercera_materia, profesor, modalidad, estado_general) 
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                             """
-                            valores = (nom, cur, div, mat_adeuda, tercera_mat, estado_gen)
+                            valores = (nom, cur, div, mat_adeuda, tercera_mat, profesor, modalidad, estado_gen)
                             c.execute(sql, valores)
                             conn.commit()
                         st.success(f"✅ {nom} registrado con éxito.")
@@ -364,23 +368,17 @@ elif menu == "Modificar Alumno":
         if conn:
             try:
                 with conn.cursor() as c:
-                    # Traemos todas las columnas para evitar el error de "columna no encontrada" 
-                    # si hay diferencias de nombres entre el código y la DB
                     sql_select = "SELECT * FROM alumnos WHERE nombre ILIKE %s"
                     c.execute(sql_select, (f"%{nombre_buscar}%",))
                     
-                    # Obtenemos los nombres de las columnas reales de la DB
                     columnas = [desc[0] for desc in c.description]
                     resultados = c.fetchall()
                 
                 if resultados:
-                    # Creamos una lista de diccionarios para manejar los datos por nombre de columna
                     lista_alumnos = [dict(zip(columnas, r)) for r in resultados]
-                    
                     opciones = {f"{a['nombre']} (Curso: {a.get('curso', '')})": i for i, a in enumerate(lista_alumnos)}
                     seleccion = st.selectbox("Seleccioná el alumno exacto:", list(opciones.keys()))
                     
-                    # Alumno seleccionado (diccionario)
                     al_sel = lista_alumnos[opciones[seleccion]]
                     id_alumno = al_sel['id']
 
@@ -389,7 +387,6 @@ elif menu == "Modificar Alumno":
                         
                         col1, col2, col3 = st.columns(3)
                         with col1:
-                            # Usamos .get() para que si la columna se llama distinto en la DB no explote
                             nuevo_nom = st.text_input("Nombre y Apellido", value=al_sel.get('nombre', ''))
                         with col2:
                             nuevo_cur = st.text_input("Curso", value=al_sel.get('curso', ''))
@@ -397,31 +394,39 @@ elif menu == "Modificar Alumno":
                             nuevo_div = st.text_input("División", value=al_sel.get('division', ''))
 
                         st.markdown("---")
-                        # BUSCAMOS LOS NOMBRES QUE USASTE EN EL INSERT DE LA FUNCIÓN 4
-                        adeudadas_val = al_sel.get('materias_adeudadas', '') 
-                        nuevas_adeudadas = st.text_area("Materias que adeudaba", value=adeudadas_val)
+                        nuevas_adeudadas = st.text_area("Materias que adeudaba", value=al_sel.get('materias_adeudadas', ''))
                         
-                        tercera_val = al_sel.get('tercera_materia', '')
-                        nueva_tercera = st.text_input("Tercera Materia elegida", value=tercera_val)
-                        
-                        # Manejo del Estado General
-                        estados = ["Pendiente", "Aprobada", "No Aprobada", "En Curso"]
-                        estado_db = al_sel.get('estado_general', 'Pendiente')
-                        idx_estado = estados.index(estado_db) if estado_db in estados else 0
-                        nuevo_estado = st.selectbox("Estado General", estados, index=idx_estado)
+                        col_e1, col_e2 = st.columns(2)
+                        with col_e1:
+                            nueva_tercera = st.text_input("Tercera Materia", value=al_sel.get('tercera_materia', ''))
+                            nuevo_profesor = st.text_input("Profesor", value=al_sel.get('profesor', '')) # NUEVO CAMPO
+                        with col_e2:
+                            # Modalidad
+                            mods = ["Materia Completa", "Por Temas", "Trabajo Práctico"]
+                            mod_db = al_sel.get('modalidad', 'Materia Completa')
+                            idx_mod = mods.index(mod_db) if mod_db in mods else 0
+                            nueva_modalidad = st.selectbox("Modalidad", mods, index=idx_mod) # NUEVO CAMPO
+                            
+                            # Estado
+                            estados = ["Pendiente", "Aprobada", "No Aprobada", "En Curso"]
+                            est_db = al_sel.get('estado_general', 'Pendiente')
+                            idx_est = estados.index(est_db) if est_db in estados else 0
+                            nuevo_estado = st.selectbox("Estado General", estados, index=idx_est)
 
                         if st.form_submit_button("Guardar Cambios"):
                             with conn.cursor() as c_up:
-                                # Sincronizamos el UPDATE con los mismos nombres del INSERT de la Func 4
+                                # Agregamos profesor y modalidad al UPDATE
                                 sql_update = """
                                     UPDATE alumnos 
                                     SET nombre=%s, curso=%s, division=%s, 
-                                        materias_adeudadas=%s, tercera_materia=%s, estado_general=%s
+                                        materias_adeudadas=%s, tercera_materia=%s, 
+                                        profesor=%s, modalidad=%s, estado_general=%s
                                     WHERE id=%s
                                 """
                                 c_up.execute(sql_update, (
                                     nuevo_nom, nuevo_cur, nuevo_div, 
-                                    nuevas_adeudadas, nueva_tercera, nuevo_estado, 
+                                    nuevas_adeudadas, nueva_tercera, 
+                                    nuevo_profesor, nueva_modalidad, nuevo_estado, 
                                     id_alumno
                                 ))
                                 conn.commit()
@@ -429,12 +434,10 @@ elif menu == "Modificar Alumno":
                                 st.rerun()
                 else:
                     st.warning("No se encontraron alumnos.")
-            
             except Exception as e:
                 st.error(f"Hubo un error con la base de datos: {e}")
             finally:
                 conn.close()
-
 # --- 6. BACKUP ---
 elif menu == "Backup & Datos":
     st.subheader("💾 Gestión de Datos")
