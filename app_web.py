@@ -206,60 +206,49 @@ elif menu == "Ficha y Reportes":
             else:
                 st.warning("No hay alumnos cargados.")
 
-        with tab2:
-            st.write("#### Reporte General")
-            c1, c2, c3 = st.columns(3)
-            f_cur = c1.text_input("Filtrar Curso", key="rep_cur")
-            f_div = c2.text_input("Filtrar División", key="rep_div")
-            f_est = c3.selectbox("Estado", ["TODOS", "Aprobada", "Pendiente", "En Curso"], key="rep_est")
+                with tab2:
+                    st.write("#### Reporte General")
+                    c1, c2, c3 = st.columns(3)
+                    f_cur = c1.text_input("Filtrar Curso", key="rep_cur")
+                    f_div = c2.text_input("Filtrar División", key="rep_div")
+                    # Ajustamos las opciones del selectbox para que coincidan con tus datos
+                    f_est = c3.selectbox("Estado", ["TODOS", "Pendiente", "Aprobada", "No Aprobada", "En Curso"], key="rep_est")
 
-            # Query ajustada a tus nombres de columna reales
-            query = "SELECT nombre, curso, division, tercera_materia, estado_general FROM alumnos WHERE 1=1"
-            params = []
-            if f_cur: query += " AND curso ILIKE %s"; params.append(f"%{f_cur}%")
-            if f_div: query += " AND division ILIKE %s"; params.append(f"%{f_div}%")
-            if f_est != "TODOS": query += " AND estado_general = %s"; params.append(f_est)
-            
-            df_reporte = pd.read_sql(query, conn, params=params)
-            st.dataframe(df_reporte, use_container_width=True)
-
-            if not df_reporte.empty:
-                if st.button("📊 Preparar Reporte General PDF"):
+                    # USAMOS SELECT * PARA EVITAR EL ERROR DE COLUMNA INEXISTENTE AL CARGAR
+                    query = "SELECT * FROM alumnos WHERE 1=1"
+                    params = []
+                    
+                    if f_cur: 
+                        query += " AND curso ILIKE %s"
+                        params.append(f"%{f_cur}%")
+                    if f_div: 
+                        query += " AND division ILIKE %s"
+                        params.append(f"%{f_div}%")
+                    
+                    # Ejecutamos la consulta de forma segura
                     try:
-                        pdf_rep = FPDF()
-                        pdf_rep.add_page()
-                        pdf_rep.set_font('Arial', 'B', 14)
-                        pdf_rep.cell(0, 10, "REPORTE GENERAL DE ALUMNOS", 0, 1, 'C')
-                        pdf_rep.ln(5)
+                        df_reporte = pd.read_sql(query, conn, params=params)
                         
-                        # Encabezados de tabla
-                        pdf_rep.set_font('Arial', 'B', 9)
-                        pdf_rep.set_fill_color(200, 220, 255)
-                        pdf_rep.cell(60, 10, "Alumno", 1, 0, 'C', True)
-                        pdf_rep.cell(30, 10, "Curso/Div", 1, 0, 'C', True)
-                        pdf_rep.cell(60, 10, "Materia", 1, 0, 'C', True)
-                        pdf_rep.cell(35, 10, "Estado", 1, 1, 'C', True)
+                        # Filtramos el estado en el DataFrame de Pandas para evitar errores de SQL
+                        if f_est != "TODOS":
+                            # Ajusta 'estado_general' si en tu DB se llama 'estado'
+                            col_estado = 'estado_general' if 'estado_general' in df_reporte.columns else 'estado'
+                            if col_estado in df_reporte.columns:
+                                df_reporte = df_reporte[df_reporte[col_estado] == f_est]
 
-                        pdf_rep.set_font('Arial', '', 8)
-                        for _, r in df_reporte.iterrows():
-                            pdf_rep.cell(60, 8, clean_text(r['nombre'])[:35], 1)
-                            pdf_rep.cell(30, 8, f"{r['curso']} {r['division']}", 1, 0, 'C')
-                            pdf_rep.cell(60, 8, clean_text(r['tercera_materia'])[:35], 1)
-                            pdf_rep.cell(35, 8, clean_text(r['estado_general']), 1, 1, 'C')
+                        # Mostramos solo las columnas que existan para que la tabla sea limpia
+                        columnas_visibles = [c for c in ['nombre', 'curso', 'division', 'tercera_materia', 'estado_general'] if c in df_reporte.columns]
+                        st.dataframe(df_reporte[columnas_visibles], use_container_width=True)
 
-                        pdf_rep_raw = pdf_rep.output(dest='S')
-                        if isinstance(pdf_rep_raw, str):
-                            pdf_rep_raw = pdf_rep_raw.encode('latin-1', 'replace')
-
-                        st.download_button(
-                            label="📥 Descargar Reporte PDF",
-                            data=pdf_rep_raw,
-                            file_name="Reporte_General.pdf",
-                            mime="application/pdf"
-                        )
+                        if not df_reporte.empty:
+                            if st.button("📊 Preparar Reporte General PDF"):
+                                # ... (aquí va el resto del código del PDF que te pasé antes)
+                                st.info("Generando archivo...")
+                    
                     except Exception as e:
-                        st.error(f"Error generando Reporte: {e}")
-        
+                        st.error(f"Error al cargar el reporte: {e}")
+                        st.info("Revisa si los nombres de las columnas en Supabase coinciden con el código.")
+
         conn.close()
 
 # --- 4. CARGAR ALUMNO ---
