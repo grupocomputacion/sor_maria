@@ -71,57 +71,63 @@ if menu == "Seguimiento de Notas":
                 d = c.fetchone()
             
             if d:
-                # El key del form asegura que todo se resetee al cambiar de alumno
-                with st.form(key=f"form_notas_final_{sel_id}"):
+                # No usamos clear_on_submit para que no borre lo que acabamos de escribir antes de procesar
+                with st.form(key=f"form_notas_v3_{sel_id}"):
                     st.markdown(f"### Estudiante: **{d['nombre']}**")
-                    st.caption("Solo se guardarán las fechas de las filas marcadas con '¿Cargar?'")
+                    st.info("💡 Para borrar una fecha, simplemente deja el campo de texto vacío.")
                     
                     for i in range(1, 11):
-                        # Agregamos una columna extra para el control de "Cargar Fecha"
-                        c_chk, c1, c2, c3 = st.columns([0.8, 1.5, 3, 1])
+                        c1, c2, c3 = st.columns([2, 3, 1])
                         
                         f_db = d[f'f{i}']
+                        # Convertimos la fecha de la DB a string DD/MM/YYYY o dejamos vacío
+                        f_str = f_db.strftime("%d/%m/%Y") if f_db else ""
                         n_db = d[f'n{i}'] if d[f'n{i}'] else ""
                         e_db = (d[f'e{i}'] == "S")
                         
-                        # 1. ¿Cargar esta fecha? (Si en DB hay fecha, por defecto es True)
-                        cargar_fecha = c_chk.checkbox("¿Cargar?", value=(f_db is not None), key=f"use_{i}_{sel_id}")
+                        # Usamos text_input para permitir que esté VACÍO (la "X" de limpieza manual)
+                        f_val = c1.text_input(f"Fecha {i} (DD/MM/AAAA)", value=f_str, key=f"f{i}_{sel_id}")
                         
-                        # 2. Fecha (Solo se toma en cuenta si cargar_fecha es True)
-                        f_val = c1.date_input(f"Fecha {i}", value=f_db if f_db else date.today(), key=f"date_{i}_{sel_id}")
+                        n_val = c2.text_input(f"Nota {i}", value=n_db, key=f"n{i}_{sel_id}")
                         
-                        # 3. Nota y Aprobado
-                        n_val = c2.text_input(f"Nota {i}", value=n_db, key=f"note_{i}_{sel_id}")
-                        a_val = c3.checkbox("APROBADO", value=e_db, key=f"check_{i}_{sel_id}")
+                        a_val = c3.checkbox("APROBADO", value=e_db, key=f"e{i}_{sel_id}")
 
                     if st.form_submit_button("💾 Guardar Cambios"):
                         try:
                             valores_finales = []
                             for i in range(1, 11):
-                                nota = st.session_state[f"note_{i}_{sel_id}"]
-                                aprobado = "S" if st.session_state[f"check_{i}_{sel_id}"] else "N"
+                                # 1. Procesar Fecha
+                                fecha_texto = st.session_state[f"f{i}_{sel_id}"].strip()
+                                fecha_final = None
                                 
-                                # LOGICA CRITICA: Si el checkbox de esa fila no está marcado, la fecha es None (NULL en SQL)
-                                if st.session_state[f"use_{i}_{sel_id}"]:
-                                    fecha = st.session_state[f"date_{i}_{sel_id}"]
-                                else:
-                                    fecha = None
+                                if fecha_texto:
+                                    try:
+                                        # Intentamos convertir el texto a objeto date
+                                        fecha_final = datetime.strptime(fecha_texto, "%d/%m/%Y").date()
+                                    except ValueError:
+                                        st.error(f"Formato de fecha incorrecto en fila {i}. Use DD/MM/AAAA")
+                                        st.stop()
                                 
-                                valores_finales.extend([nota, aprobado, fecha])
+                                # 2. Resto de campos
+                                nota = st.session_state[f"n{i}_{sel_id}"]
+                                aprobado = "S" if st.session_state[f"e{i}_{sel_id}"] else "N"
+                                
+                                valores_finales.extend([nota, aprobado, fecha_final])
 
                             with conn.cursor() as c_upd:
                                 q = "UPDATE alumnos SET " + ", ".join([f"n{i}=%s, e{i}=%s, f{i}=%s" for i in range(1, 11)]) + " WHERE id=%s"
                                 c_upd.execute(q, (*valores_finales, sel_id))
                                 conn.commit()
                             
-                            st.success(f"✅ ¡Datos de {d['nombre']} actualizados!")
+                            st.success(f"✅ ¡Registro de {d['nombre']} actualizado con éxito!")
                             st.rerun()
 
                         except Exception as e:
-                            st.error(f"Error al guardar: {e}")
+                            st.error(f"Error al actualizar en Neon: {e}")
         else:
             st.warning("No hay alumnos cargados.")
         conn.close()
+
 
 # --- 2. GESTIÓN DE ENCUENTROS ---
 elif menu == "Gestión de Encuentros":
