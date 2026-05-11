@@ -55,7 +55,7 @@ init_db()
 menu = st.sidebar.radio("MENÚ PRINCIPAL", ["Seguimiento de Notas", "Gestión de Encuentros", "Ficha y Reportes", "Cargar Alumno", "Modificar Alumno", "Backup & Datos"])
 
 
-# --- 1. SEGUIMIENTO DE NOTAS (FLUJO DE GUARDADO Y LIMPIEZA) ---
+# --- 1. SEGUIMIENTO DE NOTAS (AISLAMIENTO TOTAL POR ALUMNO) ---
 if menu == "Seguimiento de Notas":
     st.subheader("📝 Instancias de Evaluación")
     conn = conectar()
@@ -64,28 +64,17 @@ if menu == "Seguimiento de Notas":
 
         if not df.empty:
             # ── Selector de alumno con Reset ────────────────────────────────
-            # Usamos un índice dinámico en la key para forzar el reset total del componente
             if "reset_buscador" not in st.session_state:
                 st.session_state.reset_buscador = 0
 
             sel_id = st.selectbox(
                 "Seleccione Alumno",
                 df["id"].tolist(),
-                format_func=lambda x: (
-                    f"{df[df['id']==x]['nombre'].values[0]} "
-                    f"({df[df['id']==x]['curso'].values[0]})"
-                ),
+                format_func=lambda x: f"{df[df['id']==x]['nombre'].values[0]} ({df[df['id']==x]['curso'].values[0]})",
                 key=f"selector_{st.session_state.reset_buscador}",
             )
 
-            # ── Detectar cambio de alumno para cargar datos frescos ─────────
-            if st.session_state.get("alumno_activo") != sel_id:
-                claves_a_borrar = [k for k in st.session_state.keys() if any(s in k for s in ["act_", "f_", "n_", "e_"])]
-                for k in claves_a_borrar:
-                    del st.session_state[k]
-                st.session_state["alumno_activo"] = sel_id
-                st.rerun()
-
+            # ── Leer datos del alumno desde DB ──────────────────────────────
             with conn.cursor(cursor_factory=extras.DictCursor) as c:
                 c.execute("SELECT * FROM alumnos WHERE id=%s", (sel_id,))
                 d = c.fetchone()
@@ -93,51 +82,54 @@ if menu == "Seguimiento de Notas":
             if d:
                 st.markdown(f"### Estudiante: **{d['nombre']}** — {d['curso']}")
 
-                # ── Encabezado de la tabla ──────────────────────────────────
+                # ── Encabezado ──────────────────────────────────────────────
                 h0, h1, h2, h3, h4, h5 = st.columns([0.4, 0.7, 1.8, 3.2, 1.0, 0.9])
                 headers = ["**#**","**Cargar**","**Fecha**","**Observaciones**","**Aprobado**","**Limpiar**"]
                 for col, txt in zip([h0, h1, h2, h3, h4, h5], headers):
                     col.markdown(txt)
                 st.divider()
 
-                # ── Filas de datos ──────────────────────────────────────────
+                # ── Filas de datos (LLAVES ÚNICAS POR ALUMNO) ───────────────
                 for i in range(1, 11):
                     c0, c1, c2, c3, c4, c5 = st.columns([0.4, 0.7, 1.8, 3.2, 1.0, 0.9])
                     c0.markdown(f"<div style='padding-top:8px'><b>{i}</b></div>", unsafe_allow_html=True)
 
-                    # Valores base de DB
+                    # Datos base de DB para este alumno
                     v_act = d[f"f{i}"] is not None
                     v_f   = d[f"f{i}"] if d[f"f{i}"] else date.today()
                     v_n   = d[f"n{i}"] if d[f"n{i}"] else ""
                     v_e   = d[f"e{i}"] == "S"
 
-                    act = c1.checkbox("Cargar", value=v_act, key=f"act_{i}", label_visibility="collapsed")
+                    # AGREGAMOS {sel_id} A TODAS LAS KEYS PARA QUE SE LIMPIEN AL CAMBIAR ALUMNO
+                    act = c1.checkbox("Cargar", value=v_act, key=f"act_{i}_{sel_id}", label_visibility="collapsed")
 
                     if act:
-                        c2.date_input(f"F{i}", value=v_f, key=f"f_{i}", label_visibility="collapsed", format="DD/MM/YYYY")
+                        c2.date_input(f"F{i}", value=v_f, key=f"f_{i}_{sel_id}", label_visibility="collapsed", format="DD/MM/YYYY")
                     else:
                         c2.markdown("<div style='color:#aaa;padding-top:8px;font-size:0.9em;'>dd/mm/aaaa</div>", unsafe_allow_html=True)
 
-                    c3.text_input(f"N{i}", value=v_n, key=f"n_{i}", label_visibility="collapsed")
-                    c4.checkbox("E{i}", value=v_e, key=f"e_{i}", label_visibility="collapsed")
+                    c3.text_input(f"N{i}", value=v_n, key=f"n_{i}_{sel_id}", label_visibility="collapsed", placeholder="Sin observaciones")
+                    c4.checkbox("E{i}", value=v_e, key=f"e_{i}_{sel_id}", label_visibility="collapsed")
 
-                    # Botón limpiar fila individual (mantiene al alumno seleccionado)
-                    if c5.button("🗑️", key=f"limp_{i}"):
-                        for k in [f"act_{i}", f"f_{i}", f"n_{i}", f"e_{i}"]:
+                    # Botón limpiar fila individual
+                    if c5.button("🗑️", key=f"limp_{i}_{sel_id}"):
+                        # Para limpiar, simplemente removemos las keys del estado
+                        for k in [f"act_{i}_{sel_id}", f"f_{i}_{sel_id}", f"n_{i}_{sel_id}", f"e_{i}_{sel_id}"]:
                             if k in st.session_state: del st.session_state[k]
                         st.rerun()
 
                 st.divider()
 
-                # ── Botón Guardar con Reset Total ───────────────────────────
+                # ── Botón Guardar y Resetear ────────────────────────────────
                 if st.button("💾 Guardar y Finalizar", use_container_width=True, type="primary"):
                     try:
                         valores = []
                         for i in range(1, 11):
-                            is_act = st.session_state[f"act_{i}"]
-                            f_val  = st.session_state.get(f"f_{i}") if is_act else None
-                            n_val  = st.session_state[f"n_{i}"]
-                            e_val  = "S" if st.session_state[f"e_{i}"] else "N"
+                            # Accedemos a las llaves únicas
+                            is_act = st.session_state[f"act_{i}_{sel_id}"]
+                            f_val  = st.session_state.get(f"f_{i}_{sel_id}") if is_act else None
+                            n_val  = st.session_state[f"n_{i}_{sel_id}"]
+                            e_val  = "S" if st.session_state[f"e_{i}_{sel_id}"] else "N"
                             valores.extend([n_val, e_val, f_val])
 
                         with conn.cursor() as c_upd:
@@ -145,17 +137,15 @@ if menu == "Seguimiento de Notas":
                             c_upd.execute(q, (*valores, sel_id))
                             conn.commit()
 
-                        st.success(f"✅ ¡Datos guardados! Reiniciando para nueva búsqueda...")
+                        st.success(f"✅ ¡Datos guardados! Reseteando...")
 
-                        # 1. Borramos rastro de datos de edición
-                        claves = [k for k in st.session_state.keys() if any(s in k for s in ["act_", "f_", "n_", "e_", "alumno_activo"])]
-                        for k in claves:
-                            del st.session_state[k]
-                        
-                        # 2. Incrementamos el reset del buscador para que vuelva al estado inicial
+                        # Incrementamos el reset del buscador para que vuelva a cero
                         st.session_state.reset_buscador += 1
                         
-                        # 3. Recarga limpia
+                        # Borramos el rastro del alumno activo
+                        if "alumno_activo" in st.session_state:
+                            del st.session_state["alumno_activo"]
+                        
                         st.rerun()
 
                     except Exception as e:
