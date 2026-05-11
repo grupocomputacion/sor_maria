@@ -54,78 +54,79 @@ init_db()
 # --- NAVEGACIÓN ---
 menu = st.sidebar.radio("MENÚ PRINCIPAL", ["Seguimiento de Notas", "Gestión de Encuentros", "Ficha y Reportes", "Cargar Alumno", "Modificar Alumno", "Backup & Datos"])
 
+
 # --- 1. SEGUIMIENTO DE NOTAS ---
 if menu == "Seguimiento de Notas":
     st.subheader("📝 Instancias de Evaluación")
     conn = conectar()
     if conn:
-        # Traemos alumnos actualizados
         df = pd.read_sql("SELECT id, nombre, curso FROM alumnos ORDER BY nombre", conn)
         
         if not df.empty:
+            # Al cambiar de alumno, Streamlit reiniciará los widgets por el cambio de 'key' implícito
             sel_id = st.selectbox("Seleccione Alumno", df['id'].tolist(), 
                                   format_func=lambda x: f"{df[df['id']==x]['nombre'].values[0]} ({df[df['id']==x]['curso'].values[0]})")
             
-            # Traemos el registro completo del alumno seleccionado
             with conn.cursor(cursor_factory=extras.DictCursor) as c:
                 c.execute("SELECT * FROM alumnos WHERE id=%s", (sel_id,))
                 d = c.fetchone()
             
             if d:
-                # quitamos clear_on_submit para asegurar que los valores se capturen bien
+                # El formulario NO debe tener clear_on_submit si queremos procesar los datos manualmente
                 with st.form("form_notas"):
                     st.markdown(f"### Estudiante: **{d['nombre']}**")
                     
-                    # Usamos una lista para recolectar los valores FUERA del loop del submit
                     for i in range(1, 11):
                         c1, c2, c3 = st.columns([1.5, 3, 1])
                         
-                        # Recuperamos valores actuales de la base de datos
+                        # Valores actuales en Neon
                         f_db = d[f'f{i}']
                         n_db = d[f'n{i}'] if d[f'n{i}'] else ""
                         e_db = (d[f'e{i}'] == "S")
                         
-                        # Widgets
-                        # Si f_db es None, date_input mostrará la fecha de hoy por defecto, 
-                        # pero al guardar, si no se cambió, podemos decidir si guardarla o no.
-                        f_val = c1.date_input(f"Fecha {i}", value=f_db if f_db else date.today(), key=f"f{i}")
-                        n_val = c2.text_input(f"Nota/Obs {i}", value=n_db, key=f"n{i}")
-                        a_val = c3.checkbox("APROBADO", value=e_db, key=f"e{i}")
+                        # Widgets con llaves únicas por alumno para evitar mezclar datos
+                        # Al incluir sel_id en la key, si cambias de alumno, los campos se resetean sí o sí
+                        f_val = c1.date_input(f"Fecha {i}", value=f_db if f_db else date.today(), key=f"f{i}_{sel_id}")
+                        n_val = c2.text_input(f"Nota/Obs {i}", value=n_db, key=f"n{i}_{sel_id}")
+                        a_val = c3.checkbox("APROBADO", value=e_db, key=f"e{i}_{sel_id}")
 
-                    # Botón de envío
                     enviar = st.form_submit_button("💾 Guardar Cambios")
 
                 if enviar:
                     try:
-                        # Recolectamos los datos de los widgets usando sus llaves (keys)
-                        # Esto es más seguro dentro de un form de Streamlit
+                        # Recolectamos los datos de los widgets usando las llaves específicas del alumno
                         datos_a_actualizar = []
                         for i in range(1, 11):
-                            # Obtenemos el valor directamente del estado de la sesión
-                            nota = st.session_state[f"n{i}"]
-                            aprobado = "S" if st.session_state[f"e{i}"] else "N"
-                            fecha = st.session_state[f"f{i}"]
-                            
+                            nota = st.session_state[f"n{i}_{sel_id}"]
+                            aprobado = "S" if st.session_state[f"e{i}_{sel_id}"] else "N"
+                            fecha = st.session_state[f"f{i}_{sel_id}"]
                             datos_a_actualizar.extend([nota, aprobado, fecha])
 
                         with conn.cursor() as c_upd:
-                            # Construimos la query
                             columnas_sql = ", ".join([f"n{i}=%s, e{i}=%s, f{i}=%s" for i in range(1, 11)])
                             q = f"UPDATE alumnos SET {columnas_sql} WHERE id=%s"
                             
                             c_upd.execute(q, (*datos_a_actualizar, sel_id))
                             conn.commit()
                         
-                        st.success(f"✅ ¡Datos de {d['nombre']} guardados en Neon!")
-                        # El rerun es vital para que el selectbox y los inputs muestren la info nueva
+                        st.success(f"✅ ¡Cambios guardados solo para {d['nombre']}!")
+                        
+                        # Limpiamos las llaves de la memoria de Streamlit para este alumno antes del rerun
+                        for i in range(1, 11):
+                            del st.session_state[f"f{i}_{sel_id}"]
+                            del st.session_state[f"n{i}_{sel_id}"]
+                            del st.session_state[f"e{i}_{sel_id}"]
+                        
                         st.rerun()
                         
                     except Exception as e:
-                        conn.rollback()
+                        if conn: conn.rollback()
                         st.error(f"Error al guardar: {e}")
         else:
             st.warning("No hay alumnos cargados.")
         conn.close()
+
+
 # --- 2. GESTIÓN DE ENCUENTROS ---
 elif menu == "Gestión de Encuentros":
     st.subheader("🤝 Seguimiento de Encuentros")
