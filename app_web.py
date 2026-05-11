@@ -55,6 +55,7 @@ init_db()
 menu = st.sidebar.radio("MENÚ PRINCIPAL", ["Seguimiento de Notas", "Gestión de Encuentros", "Ficha y Reportes", "Cargar Alumno", "Modificar Alumno", "Backup & Datos"])
 
 
+# --- 1. SEGUIMIENTO DE NOTAS (CORREGIDO) ---
 if menu == "Seguimiento de Notas":
     st.subheader("📝 Instancias de Evaluación")
     conn = conectar()
@@ -75,12 +76,12 @@ if menu == "Seguimiento de Notas":
 
             # ── Detectar cambio de alumno y limpiar estado ──────────────────
             if st.session_state.get("alumno_activo") != sel_id:
-                for i in range(1, 11):
-                    for sufijo in ("act", "f", "n", "e"):
-                        k = f"{sufijo}_{i}"
-                        if k in st.session_state:
-                            del st.session_state[k]
+                # Al cambiar de alumno, borramos TODO el rastro del anterior
+                claves_a_borrar = [k for k in st.session_state.keys() if any(s in k for s in ["act_", "f_", "n_", "e_"])]
+                for k in claves_a_borrar:
+                    del st.session_state[k]
                 st.session_state["alumno_activo"] = sel_id
+                st.rerun() # Forzamos recarga para que los widgets nazcan con datos nuevos de DB
 
             # ── Leer datos del alumno desde DB ──────────────────────────────
             with conn.cursor(cursor_factory=extras.DictCursor) as c:
@@ -90,80 +91,47 @@ if menu == "Seguimiento de Notas":
             if d:
                 st.markdown(f"### Estudiante: **{d['nombre']}** — {d['curso']}")
 
-                # ── Inicializar session_state con valores de DB ─────────────
-                # Solo si no existen aún (no pisamos ediciones del usuario)
-                for i in range(1, 11):
-                    if f"act_{i}" not in st.session_state:
-                        st.session_state[f"act_{i}"] = d[f"f{i}"] is not None
-                    if f"f_{i}" not in st.session_state:
-                        st.session_state[f"f_{i}"] = d[f"f{i}"] if d[f"f{i}"] else None
-                    if f"n_{i}" not in st.session_state:
-                        st.session_state[f"n_{i}"] = d[f"n{i}"] or ""
-                    if f"e_{i}" not in st.session_state:
-                        st.session_state[f"e_{i}"] = d[f"e{i}"] == "S"
-
                 # ── Encabezado ──────────────────────────────────────────────
                 h0,h1,h2,h3,h4,h5 = st.columns([0.4, 0.7, 1.8, 3.2, 1.0, 0.9])
-                for col, txt in zip(
-                    [h0,h1,h2,h3,h4,h5],
-                    ["**#**","**Cargar**","**Fecha**","**Observaciones**","**Aprobado**","**Limpiar**"],
-                ):
+                cols_txt = ["**#**","**Cargar**","**Fecha**","**Observaciones**","**Aprobado**","**Limpiar**"]
+                for col, txt in zip([h0,h1,h2,h3,h4,h5], cols_txt):
                     col.markdown(txt)
                 st.divider()
 
-                # ── Filas reactivas (sin form) ──────────────────────────────
+                # ── Filas reactivas (sin form para que el 'Limpiar' funcione al toque) ──
                 for i in range(1, 11):
                     c0,c1,c2,c3,c4,c5 = st.columns([0.4, 0.7, 1.8, 3.2, 1.0, 0.9])
 
-                    c0.markdown(
-                        f"<div style='padding-top:8px'><b>{i}</b></div>",
-                        unsafe_allow_html=True
-                    )
+                    c0.markdown(f"<div style='padding-top:8px'><b>{i}</b></div>", unsafe_allow_html=True)
 
-                    activar = c1.checkbox(
-                        "Cargar",
-                        value=st.session_state[f"act_{i}"],
-                        key=f"act_{i}",
-                        label_visibility="collapsed",
-                    )
+                    # Recuperamos valores de DB como valores iniciales por defecto
+                    val_act_db = d[f"f{i}"] is not None
+                    val_f_db = d[f"f{i}"] if d[f"f{i}"] else date.today()
+                    val_n_db = d[f"n{i}"] if d[f"n{i}"] else ""
+                    val_e_db = d[f"e{i}"] == "S"
+
+                    # Widget ACTIVAR
+                    activar = c1.checkbox("Cargar", value=val_act_db, key=f"act_{i}", label_visibility="collapsed")
 
                     if activar:
-                        f_guardada = st.session_state[f"f_{i}"]
                         c2.date_input(
                             f"Fecha {i}",
-                            value=f_guardada if f_guardada else date.today(),
+                            value=val_f_db,
                             key=f"f_{i}",
                             label_visibility="collapsed",
                             format="DD/MM/YYYY",
                         )
                     else:
-                        c2.markdown(
-                            "<div style='color:#aaa;padding-top:8px;font-size:0.9em;'>"
-                            "dd/mm/aaaa</div>",
-                            unsafe_allow_html=True,
-                        )
+                        c2.markdown("<div style='color:#aaa;padding-top:8px;font-size:0.9em;'>dd/mm/aaaa</div>", unsafe_allow_html=True)
 
-                    c3.text_input(
-                        f"Nota {i}",
-                        value=st.session_state[f"n_{i}"],
-                        key=f"n_{i}",
-                        label_visibility="collapsed",
-                        placeholder="Observaciones...",
-                    )
-
-                    c4.checkbox(
-                        "Aprobado",
-                        value=st.session_state[f"e_{i}"],
-                        key=f"e_{i}",
-                        label_visibility="collapsed",
-                    )
+                    c3.text_input(f"Nota {i}", value=val_n_db, key=f"n_{i}", label_visibility="collapsed", placeholder="Observaciones...")
+                    c4.checkbox("Aprobado", value=val_e_db, key=f"e_{i}", label_visibility="collapsed")
 
                     # Limpiar fila individual
                     if c5.button("🗑️", key=f"limpiar_{i}", help=f"Limpiar fila {i}"):
-                        st.session_state[f"act_{i}"] = False
-                        st.session_state[f"f_{i}"]   = None
-                        st.session_state[f"n_{i}"]   = ""
-                        st.session_state[f"e_{i}"]   = False
+                        # Borramos las keys del session_state para que el widget tome el 'value' inicial (que tras el rerun será el de DB o vacío)
+                        for k in [f"act_{i}", f"f_{i}", f"n_{i}", f"e_{i}"]:
+                            if k in st.session_state: del st.session_state[k]
                         st.rerun()
 
                 st.divider()
@@ -171,47 +139,36 @@ if menu == "Seguimiento de Notas":
                 # ── Botones principales ─────────────────────────────────────
                 b1, b2, _ = st.columns([2, 2, 5])
 
-                if b1.button("💾 Guardar", use_container_width=True, type="primary"):
+                if b1.button("💾 Guardar Cambios", use_container_width=True, type="primary"):
                     try:
                         valores = []
                         for i in range(1, 11):
+                            # Accedemos directamente al estado del widget
                             activado = st.session_state[f"act_{i}"]
-                            fecha    = st.session_state[f"f_{i}"] if activado else None
-                            nota     = st.session_state[f"n_{i}"]
+                            # Si está activado, tomamos la fecha. Si no, forzamos None.
+                            fecha = st.session_state.get(f"f_{i}") if activado else None
+                            nota = st.session_state[f"n_{i}"]
                             aprobado = "S" if st.session_state[f"e_{i}"] else "N"
                             valores.extend([nota, aprobado, fecha])
 
                         with conn.cursor() as c_upd:
-                            q = (
-                                "UPDATE alumnos SET "
-                                + ", ".join([f"n{i}=%s, e{i}=%s, f{i}=%s" for i in range(1, 11)])
-                                + " WHERE id=%s"
-                            )
+                            q = "UPDATE alumnos SET " + ", ".join([f"n{i}=%s, e{i}=%s, f{i}=%s" for i in range(1, 11)]) + " WHERE id=%s"
                             c_upd.execute(q, (*valores, sel_id))
                             conn.commit()
 
-                        st.success(f"Datos de **{d['nombre']}** guardados correctamente.")
-
-                        # Limpiar estado para recargar desde DB
-                        for i in range(1, 11):
-                            for sufijo in ("act", "f", "n", "e"):
-                                k = f"{sufijo}_{i}"
-                                if k in st.session_state:
-                                    del st.session_state[k]
-                        if "alumno_activo" in st.session_state:
-                            del st.session_state["alumno_activo"]
-
+                        st.success(f"Datos de **{d['nombre']}** guardados.")
+                        # Limpiar session_state para forzar recarga limpia
+                        for k in list(st.session_state.keys()):
+                            if any(s in k for s in ["act_", "f_", "n_", "e_"]): del st.session_state[k]
                         st.rerun()
 
                     except Exception as e:
                         st.error(f"Error al guardar: {e}")
 
-                if b2.button("🧹 Limpiar todo", use_container_width=True):
-                    for i in range(1, 11):
-                        st.session_state[f"act_{i}"] = False
-                        st.session_state[f"f_{i}"]   = None
-                        st.session_state[f"n_{i}"]   = ""
-                        st.session_state[f"e_{i}"]   = False
+                if b2.button("🧹 Limpiar Todo", use_container_width=True):
+                    claves_a_borrar = [k for k in st.session_state.keys() if any(s in k for s in ["act_", "f_", "n_", "e_"])]
+                    for k in claves_a_borrar:
+                        del st.session_state[k]
                     st.rerun()
 
         conn.close()
