@@ -308,135 +308,70 @@ elif menu == "Cargar Alumno":
 
 # --- 5. MODIFICAR ALUMNO ---
 elif menu == "Modificar Alumno":
-    st.subheader("📝 Modificar Datos Completos de Alumno")
+    st.subheader("📝 Modificar Datos de Alumno")
     
-    # Buscador para elegir al alumno
+    # 1. Buscador simple
     nombre_buscar = st.text_input("Buscar alumno por nombre para editar")
     
     if nombre_buscar:
         conn = conectar()
-        with conn.cursor() as c:
-            # --- CAMBIO 1: QUERY DE SELECCIÓN CON JOINS ---
-            # Traemos datos del alumno + datos de su tercera materia (si tiene)
-            sql_select = """
-                SELECT 
-                    a.id, a.nombre, a.curso, a.materias_adeuda,
-                    i.id_materia, i.id_profesor, i.estado_materia
-                FROM alumnos a
-                LEFT JOIN inscripciones_tercera i ON a.id = i.id_alumno
-                WHERE a.nombre ILIKE %s
-            """
-            # Agrega esto para depurar
-            print(f"Ejecutando consulta en: {sql_select}") 
-            # Verifica si el nombre que aparece después del FROM es idéntico al que ves en Supabase
-            
-            c.execute(sql_select, (f"%{nombre_buscar}%",))
-            resultados = c.fetchall()
-        
-        if resultados:
-            # Diccionario para el selectbox
-            opciones = {f"{r[1]} ({r[2]})": r[0] for r in resultados}
-            seleccion = st.selectbox("Seleccioná el alumno exacto:", list(opciones.keys()))
-            id_alumno = opciones[seleccion]
-
-            # Traemos los datos actuales del alumno elegido del fetchall
-            alumno_actual = next(r for r in resultados if r[0] == id_alumno)
-
-            # Índices de alumno_actual según la query:
-            # 0: id, 1: nombre, 2: curso, 3: materias_adeuda, 
-            # 4: id_materia, 5: id_profesor, 6: estado_materia
-
-            # --- OBTENER LISTAS PARA SELECTBOXES (Materias y Profesores) ---
-            # Esto es necesario para que el usuario elija de una lista, no escriba
+        if conn:
             with conn.cursor() as c:
-                c.execute("SELECT id, nombre_materia FROM materias")
-                lista_materias = c.fetchall() # [(1, 'Matemáticas'), (2, 'Historia')]
+                # Buscamos en la tabla 'alumnos' que es la que usas en el alta
+                sql_select = """
+                    SELECT id, nombre, curso, division, materias_adeudadas, tercera_materia, estado_general 
+                    FROM alumnos 
+                    WHERE nombre ILIKE %s
+                """
+                c.execute(sql_select, (f"%{nombre_buscar}%",))
+                resultados = c.fetchall()
+            
+            if resultados:
+                # Selección del alumno específico
+                opciones = {f"{r[1]} (Curso: {r[2]} {r[3]})": r for r in resultados}
+                seleccion = st.selectbox("Seleccioná el alumno exacto:", list(opciones.keys()))
+                datos_actuales = opciones[seleccion]
                 
-                c.execute("SELECT id, nombre_profesor FROM profesores")
-                lista_profesores = c.fetchall() # [(1, 'Dr. Gómez'), (2, 'Lic. Pérez')]
+                # Mapeo de datos actuales:
+                # 0:id, 1:nombre, 2:curso, 3:division, 4:materias_adeudadas, 5:tercera_materia, 6:estado_general
 
-            # Creamos diccionarios para mapear nombre<->id en Streamlit
-            dict_materias = {m[1]: m[0] for m in lista_materias}
-            dict_profesores = {p[1]: p[0] for p in lista_profesores}
+                with st.form("form_edicion"):
+                    st.info(f"Editando a: {datos_actuales[1]}")
+                    
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        nuevo_nom = st.text_input("Nombre y Apellido", value=datos_actuales[1])
+                    with col2:
+                        nuevo_cur = st.text_input("Curso", value=datos_actuales[2])
+                    with col3:
+                        nuevo_div = st.text_input("División", value=datos_actuales[3] if datos_actuales[3] else "")
 
-            # --- 2. Formulario de edición ---
-            with st.form("form_edicion_completa"):
-                st.info(f"Editando a: {alumno_actual[1]} (ID: {id_alumno})")
-                
-                # --- CAMBIO 2: CAMPOS DE LA INTERFAZ ---
-                
-                # A. Materias que adeuda (asumiendo campo de texto largo)
-                # Usamos value="" si es None
-                adeuda_actual = alumno_actual[3] if alumno_actual[3] else ""
-                nuevas_adeudadas = st.text_area("Materias que adeuda (separadas por coma)", value=adeuda_actual)
-                
-                st.write("---")
-                st.write("**Datos de la Tercera Materia**")
+                    st.markdown("---")
+                    nuevas_adeudadas = st.text_area("Materias que adeudaba", value=datos_actuales[4] if datos_actuales[4] else "")
+                    nueva_tercera = st.text_input("Tercera Materia elegida", value=datos_actuales[5] if datos_actuales[5] else "")
+                    
+                    estados = ["Pendiente", "Aprobada", "No Aprobada", "En Curso"]
+                    idx_estado = estados.index(datos_actuales[6]) if datos_actuales[6] in estados else 0
+                    nuevo_estado = st.selectbox("Estado General", estados, index=idx_estado)
 
-                # B. Tercera Materia (Selectbox)
-                # Calculamos el índice actual
-                materia_id_actual = alumno_actual[4]
-                # Obtenemos el nombre actual si existe el ID
-                materia_nombre_actual = next((nombre for nombre, id in dict_materias.items() if id == materia_id_actual), None)
-                
-                # Selectbox de materias
-                materias_keys = list(dict_materias.keys())
-                # Si el alumno tiene materia, buscamos su índice. Si no, default a 0 o agregamos opción 'Ninguna'
-                index_materia = materias_keys.index(materia_nombre_actual) if materia_nombre_actual in materias_keys else 0
-                materia_seleccionada = st.selectbox("Tercera Materia", materias_keys, index=index_materia)
-
-                # C. Profesor involucrado (Selectbox)
-                profe_id_actual = alumno_actual[5]
-                profe_nombre_actual = next((nombre for nombre, id in dict_profesores.items() if id == profe_id_actual), None)
-                
-                profesores_keys = list(dict_profesores.keys())
-                index_profe = profesores_keys.index(profe_nombre_actual) if profe_nombre_actual in profesores_keys else 0
-                profesor_seleccionado = st.selectbox("Profesor involucrado", profesores_keys, index=index_profe)
-
-                # D. Estado de la tercera materia (Selectbox)
-                estados_posibles = ["Pendiente", "En Curso", "Aprobada", "No Aprobada"]
-                estado_actual = alumno_actual[6] if alumno_actual[6] else "Pendiente"
-                
-                index_estado = estados_posibles.index(estado_actual) if estado_actual in estados_posibles else 0
-                nuevo_estado_materia = st.selectbox("Estado de la tercera materia", estados_posibles, index=index_estado)
-
-                # BOTÓN DE ACTUALIZAR
-                if st.form_submit_button("Guardar Cambios Completos"):
-                    # Obtenemos los IDs reales seleccionados
-                    id_materia_nueva = dict_materias[materia_seleccionada]
-                    id_profesor_nuevo = dict_profesores[profesor_seleccionado]
-
-                    with conn.cursor() as c:
+                    if st.form_submit_button("Actualizar Alumno"):
                         try:
-                            # --- CAMBIO 3: QUERIES DE ACTUALIZACIÓN ---
-                            
-                            # 1. Actualizar tabla alumnos (materias adeudadas)
-                            sql_adeuda = "UPDATE alumnos SET materias_adeuda = %s WHERE id = %s"
-                            c.execute(sql_adeuda, (nuevas_adeudadas, id_alumno))
-                            
-                            # 2. Actualizar tabla inscripciones_tercera 
-                            # (Usamos ON CONFLICT por si el alumno no tenía inscripción previa)
-                            # Esto asume que id_alumno es UNIQUE o PRIMARY KEY en inscripciones_tercera
-                            sql_tercera = """
-                                INSERT INTO inscripciones_tercera (id_alumno, id_materia, id_profesor, estado_materia)
-                                VALUES (%s, %s, %s, %s)
-                                ON CONFLICT (id_alumno) 
-                                DO UPDATE SET 
-                                    id_materia = EXCLUDED.id_materia,
-                                    id_profesor = EXCLUDED.id_profesor,
-                                    estado_materia = EXCLUDED.estado_materia
-                            """
-                            c.execute(sql_tercera, (id_alumno, id_materia_nueva, id_profesor_nuevo, nuevo_estado_materia))
-                            
-                            conn.commit()
-                            st.success("✅ Datos del alumno y tercera materia actualizados correctamente.")
+                            with conn.cursor() as c:
+                                sql_update = """
+                                    UPDATE alumnos 
+                                    SET nombre=%s, curso=%s, division=%s, materias_adeudadas=%s, 
+                                        tercera_materia=%s, estado_general=%s
+                                    WHERE id=%s
+                                """
+                                c.execute(sql_update, (nuevo_nom, nuevo_cur, nuevo_div, nuevas_adeudadas, nueva_tercera, nuevo_estado, datos_actuales[0]))
+                                conn.commit()
+                                st.success("✅ Datos actualizados correctamente.")
+                                st.rerun() # Recarga para ver los cambios
                         except Exception as e:
-                            conn.rollback()
-                            st.error(f"❌ Error al actualizar: {e}")
-
-        else:
-            st.warning("No se encontraron alumnos con ese nombre.")
-        conn.close()
+                            st.error(f"Error al actualizar: {e}")
+            else:
+                st.warning("No se encontraron alumnos con ese nombre.")
+            conn.close()
 
 
 # --- 6. BACKUP ---
