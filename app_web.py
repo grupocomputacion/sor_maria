@@ -310,69 +310,83 @@ elif menu == "Cargar Alumno":
 elif menu == "Modificar Alumno":
     st.subheader("📝 Modificar Datos de Alumno")
     
-    # 1. Buscador simple
     nombre_buscar = st.text_input("Buscar alumno por nombre para editar")
     
     if nombre_buscar:
         conn = conectar()
         if conn:
-            with conn.cursor() as c:
-                # Buscamos en la tabla 'alumnos' que es la que usas en el alta
-                sql_select = """
-                    SELECT id, nombre, curso, division, materias_adeudadas, tercera_materia, estado_general 
-                    FROM alumnos 
-                    WHERE nombre ILIKE %s
-                """
-                c.execute(sql_select, (f"%{nombre_buscar}%",))
-                resultados = c.fetchall()
-            
-            if resultados:
-                # Selección del alumno específico
-                opciones = {f"{r[1]} (Curso: {r[2]} {r[3]})": r for r in resultados}
-                seleccion = st.selectbox("Seleccioná el alumno exacto:", list(opciones.keys()))
-                datos_actuales = opciones[seleccion]
+            try:
+                with conn.cursor() as c:
+                    # Traemos todas las columnas para evitar el error de "columna no encontrada" 
+                    # si hay diferencias de nombres entre el código y la DB
+                    sql_select = "SELECT * FROM alumnos WHERE nombre ILIKE %s"
+                    c.execute(sql_select, (f"%{nombre_buscar}%",))
+                    
+                    # Obtenemos los nombres de las columnas reales de la DB
+                    columnas = [desc[0] for desc in c.description]
+                    resultados = c.fetchall()
                 
-                # Mapeo de datos actuales:
-                # 0:id, 1:nombre, 2:curso, 3:division, 4:materias_adeudadas, 5:tercera_materia, 6:estado_general
-
-                with st.form("form_edicion"):
-                    st.info(f"Editando a: {datos_actuales[1]}")
+                if resultados:
+                    # Creamos una lista de diccionarios para manejar los datos por nombre de columna
+                    lista_alumnos = [dict(zip(columnas, r)) for r in resultados]
                     
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        nuevo_nom = st.text_input("Nombre y Apellido", value=datos_actuales[1])
-                    with col2:
-                        nuevo_cur = st.text_input("Curso", value=datos_actuales[2])
-                    with col3:
-                        nuevo_div = st.text_input("División", value=datos_actuales[3] if datos_actuales[3] else "")
-
-                    st.markdown("---")
-                    nuevas_adeudadas = st.text_area("Materias que adeudaba", value=datos_actuales[4] if datos_actuales[4] else "")
-                    nueva_tercera = st.text_input("Tercera Materia elegida", value=datos_actuales[5] if datos_actuales[5] else "")
+                    opciones = {f"{a['nombre']} (Curso: {a.get('curso', '')})": i for i, a in enumerate(lista_alumnos)}
+                    seleccion = st.selectbox("Seleccioná el alumno exacto:", list(opciones.keys()))
                     
-                    estados = ["Pendiente", "Aprobada", "No Aprobada", "En Curso"]
-                    idx_estado = estados.index(datos_actuales[6]) if datos_actuales[6] in estados else 0
-                    nuevo_estado = st.selectbox("Estado General", estados, index=idx_estado)
+                    # Alumno seleccionado (diccionario)
+                    al_sel = lista_alumnos[opciones[seleccion]]
+                    id_alumno = al_sel['id']
 
-                    if st.form_submit_button("Actualizar Alumno"):
-                        try:
-                            with conn.cursor() as c:
+                    with st.form("form_edicion"):
+                        st.info(f"Editando a: {al_sel['nombre']}")
+                        
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            # Usamos .get() para que si la columna se llama distinto en la DB no explote
+                            nuevo_nom = st.text_input("Nombre y Apellido", value=al_sel.get('nombre', ''))
+                        with col2:
+                            nuevo_cur = st.text_input("Curso", value=al_sel.get('curso', ''))
+                        with col3:
+                            nuevo_div = st.text_input("División", value=al_sel.get('division', ''))
+
+                        st.markdown("---")
+                        # BUSCAMOS LOS NOMBRES QUE USASTE EN EL INSERT DE LA FUNCIÓN 4
+                        adeudadas_val = al_sel.get('materias_adeudadas', '') 
+                        nuevas_adeudadas = st.text_area("Materias que adeudaba", value=adeudadas_val)
+                        
+                        tercera_val = al_sel.get('tercera_materia', '')
+                        nueva_tercera = st.text_input("Tercera Materia elegida", value=tercera_val)
+                        
+                        # Manejo del Estado General
+                        estados = ["Pendiente", "Aprobada", "No Aprobada", "En Curso"]
+                        estado_db = al_sel.get('estado_general', 'Pendiente')
+                        idx_estado = estados.index(estado_db) if estado_db in estados else 0
+                        nuevo_estado = st.selectbox("Estado General", estados, index=idx_estado)
+
+                        if st.form_submit_button("Guardar Cambios"):
+                            with conn.cursor() as c_up:
+                                # Sincronizamos el UPDATE con los mismos nombres del INSERT de la Func 4
                                 sql_update = """
                                     UPDATE alumnos 
-                                    SET nombre=%s, curso=%s, division=%s, materias_adeudadas=%s, 
-                                        tercera_materia=%s, estado_general=%s
+                                    SET nombre=%s, curso=%s, division=%s, 
+                                        materias_adeudadas=%s, tercera_materia=%s, estado_general=%s
                                     WHERE id=%s
                                 """
-                                c.execute(sql_update, (nuevo_nom, nuevo_cur, nuevo_div, nuevas_adeudadas, nueva_tercera, nuevo_estado, datos_actuales[0]))
+                                c_up.execute(sql_update, (
+                                    nuevo_nom, nuevo_cur, nuevo_div, 
+                                    nuevas_adeudadas, nueva_tercera, nuevo_estado, 
+                                    id_alumno
+                                ))
                                 conn.commit()
                                 st.success("✅ Datos actualizados correctamente.")
-                                st.rerun() # Recarga para ver los cambios
-                        except Exception as e:
-                            st.error(f"Error al actualizar: {e}")
-            else:
-                st.warning("No se encontraron alumnos con ese nombre.")
-            conn.close()
-
+                                st.rerun()
+                else:
+                    st.warning("No se encontraron alumnos.")
+            
+            except Exception as e:
+                st.error(f"Hubo un error con la base de datos: {e}")
+            finally:
+                conn.close()
 
 # --- 6. BACKUP ---
 elif menu == "Backup & Datos":
