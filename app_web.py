@@ -71,60 +71,50 @@ if menu == "Seguimiento de Notas":
                 d = c.fetchone()
             
             if d:
-                with st.form(key=f"form_notas_{sel_id}"): # Formulario único por alumno
+                # El key del form asegura que todo se resetee al cambiar de alumno
+                with st.form(key=f"form_notas_final_{sel_id}"):
                     st.markdown(f"### Estudiante: **{d['nombre']}**")
-                    
-                    datos_temporales = []
+                    st.caption("Solo se guardarán las fechas de las filas marcadas con '¿Cargar?'")
                     
                     for i in range(1, 11):
-                        c1, c2, c3 = st.columns([1.5, 3, 1])
+                        # Agregamos una columna extra para el control de "Cargar Fecha"
+                        c_chk, c1, c2, c3 = st.columns([0.8, 1.5, 3, 1])
                         
-                        # 1. Recuperamos datos de Neon
-                        f_db = d[f'f{i}'] # Esto puede ser una fecha o None
+                        f_db = d[f'f{i}']
                         n_db = d[f'n{i}'] if d[f'n{i}'] else ""
                         e_db = (d[f'e{i}'] == "S")
                         
-                        # 2. Widgets con llaves ultra-específicas
-                        # Usamos el índice 'i' Y el 'sel_id' para que no haya cruce de datos
+                        # 1. ¿Cargar esta fecha? (Si en DB hay fecha, por defecto es True)
+                        cargar_fecha = c_chk.checkbox("¿Cargar?", value=(f_db is not None), key=f"use_{i}_{sel_id}")
                         
-                        # IMPORTANTE: Si f_db es None, date_input necesita un valor. 
-                        # Usamos date.today() pero solo como visualización.
-                        fecha_widget = c1.date_input(
-                            f"Fecha {i}", 
-                            value=f_db if f_db else date.today(), 
-                            key=f"date_{i}_{sel_id}"
-                        )
+                        # 2. Fecha (Solo se toma en cuenta si cargar_fecha es True)
+                        f_val = c1.date_input(f"Fecha {i}", value=f_db if f_db else date.today(), key=f"date_{i}_{sel_id}")
                         
-                        nota_widget = c2.text_input(
-                            f"Nota {i}", 
-                            value=n_db, 
-                            key=f"note_{i}_{sel_id}"
-                        )
-                        
-                        aprobado_widget = c3.checkbox(
-                            "APROBADO", 
-                            value=e_db, 
-                            key=f"check_{i}_{sel_id}"
-                        )
+                        # 3. Nota y Aprobado
+                        n_val = c2.text_input(f"Nota {i}", value=n_db, key=f"note_{i}_{sel_id}")
+                        a_val = c3.checkbox("APROBADO", value=e_db, key=f"check_{i}_{sel_id}")
 
                     if st.form_submit_button("💾 Guardar Cambios"):
                         try:
-                            # Recolectamos la información DIRECTO de los widgets actuales
-                            nuevos_valores = []
+                            valores_finales = []
                             for i in range(1, 11):
-                                # Extraemos los valores de las keys únicas
-                                v_nota = st.session_state[f"note_{i}_{sel_id}"]
-                                v_aprobado = "S" if st.session_state[f"check_{i}_{sel_id}"] else "N"
-                                v_fecha = st.session_state[f"date_{i}_{sel_id}"]
+                                nota = st.session_state[f"note_{i}_{sel_id}"]
+                                aprobado = "S" if st.session_state[f"check_{i}_{sel_id}"] else "N"
                                 
-                                nuevos_valores.extend([v_nota, v_aprobado, v_fecha])
+                                # LOGICA CRITICA: Si el checkbox de esa fila no está marcado, la fecha es None (NULL en SQL)
+                                if st.session_state[f"use_{i}_{sel_id}"]:
+                                    fecha = st.session_state[f"date_{i}_{sel_id}"]
+                                else:
+                                    fecha = None
+                                
+                                valores_finales.extend([nota, aprobado, fecha])
 
                             with conn.cursor() as c_upd:
                                 q = "UPDATE alumnos SET " + ", ".join([f"n{i}=%s, e{i}=%s, f{i}=%s" for i in range(1, 11)]) + " WHERE id=%s"
-                                c_upd.execute(q, (*nuevos_valores, sel_id))
+                                c_upd.execute(q, (*valores_finales, sel_id))
                                 conn.commit()
                             
-                            st.success(f"✅ Se actualizaron las 10 instancias para {d['nombre']}")
+                            st.success(f"✅ ¡Datos de {d['nombre']} actualizados!")
                             st.rerun()
 
                         except Exception as e:
@@ -132,7 +122,6 @@ if menu == "Seguimiento de Notas":
         else:
             st.warning("No hay alumnos cargados.")
         conn.close()
-
 
 # --- 2. GESTIÓN DE ENCUENTROS ---
 elif menu == "Gestión de Encuentros":
