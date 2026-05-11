@@ -63,7 +63,6 @@ if menu == "Seguimiento de Notas":
         df = pd.read_sql("SELECT id, nombre, curso FROM alumnos ORDER BY nombre", conn)
         
         if not df.empty:
-            # Al cambiar de alumno, Streamlit reiniciará los widgets por el cambio de 'key' implícito
             sel_id = st.selectbox("Seleccione Alumno", df['id'].tolist(), 
                                   format_func=lambda x: f"{df[df['id']==x]['nombre'].values[0]} ({df[df['id']==x]['curso'].values[0]})")
             
@@ -72,56 +71,64 @@ if menu == "Seguimiento de Notas":
                 d = c.fetchone()
             
             if d:
-                # El formulario NO debe tener clear_on_submit si queremos procesar los datos manualmente
-                with st.form("form_notas"):
+                with st.form(key=f"form_notas_{sel_id}"): # Formulario único por alumno
                     st.markdown(f"### Estudiante: **{d['nombre']}**")
+                    
+                    datos_temporales = []
                     
                     for i in range(1, 11):
                         c1, c2, c3 = st.columns([1.5, 3, 1])
                         
-                        # Valores actuales en Neon
-                        f_db = d[f'f{i}']
+                        # 1. Recuperamos datos de Neon
+                        f_db = d[f'f{i}'] # Esto puede ser una fecha o None
                         n_db = d[f'n{i}'] if d[f'n{i}'] else ""
                         e_db = (d[f'e{i}'] == "S")
                         
-                        # Widgets con llaves únicas por alumno para evitar mezclar datos
-                        # Al incluir sel_id en la key, si cambias de alumno, los campos se resetean sí o sí
-                        f_val = c1.date_input(f"Fecha {i}", value=f_db if f_db else date.today(), key=f"f{i}_{sel_id}")
-                        n_val = c2.text_input(f"Nota/Obs {i}", value=n_db, key=f"n{i}_{sel_id}")
-                        a_val = c3.checkbox("APROBADO", value=e_db, key=f"e{i}_{sel_id}")
+                        # 2. Widgets con llaves ultra-específicas
+                        # Usamos el índice 'i' Y el 'sel_id' para que no haya cruce de datos
+                        
+                        # IMPORTANTE: Si f_db es None, date_input necesita un valor. 
+                        # Usamos date.today() pero solo como visualización.
+                        fecha_widget = c1.date_input(
+                            f"Fecha {i}", 
+                            value=f_db if f_db else date.today(), 
+                            key=f"date_{i}_{sel_id}"
+                        )
+                        
+                        nota_widget = c2.text_input(
+                            f"Nota {i}", 
+                            value=n_db, 
+                            key=f"note_{i}_{sel_id}"
+                        )
+                        
+                        aprobado_widget = c3.checkbox(
+                            "APROBADO", 
+                            value=e_db, 
+                            key=f"check_{i}_{sel_id}"
+                        )
 
-                    enviar = st.form_submit_button("💾 Guardar Cambios")
+                    if st.form_submit_button("💾 Guardar Cambios"):
+                        try:
+                            # Recolectamos la información DIRECTO de los widgets actuales
+                            nuevos_valores = []
+                            for i in range(1, 11):
+                                # Extraemos los valores de las keys únicas
+                                v_nota = st.session_state[f"note_{i}_{sel_id}"]
+                                v_aprobado = "S" if st.session_state[f"check_{i}_{sel_id}"] else "N"
+                                v_fecha = st.session_state[f"date_{i}_{sel_id}"]
+                                
+                                nuevos_valores.extend([v_nota, v_aprobado, v_fecha])
 
-                if enviar:
-                    try:
-                        # Recolectamos los datos de los widgets usando las llaves específicas del alumno
-                        datos_a_actualizar = []
-                        for i in range(1, 11):
-                            nota = st.session_state[f"n{i}_{sel_id}"]
-                            aprobado = "S" if st.session_state[f"e{i}_{sel_id}"] else "N"
-                            fecha = st.session_state[f"f{i}_{sel_id}"]
-                            datos_a_actualizar.extend([nota, aprobado, fecha])
-
-                        with conn.cursor() as c_upd:
-                            columnas_sql = ", ".join([f"n{i}=%s, e{i}=%s, f{i}=%s" for i in range(1, 11)])
-                            q = f"UPDATE alumnos SET {columnas_sql} WHERE id=%s"
+                            with conn.cursor() as c_upd:
+                                q = "UPDATE alumnos SET " + ", ".join([f"n{i}=%s, e{i}=%s, f{i}=%s" for i in range(1, 11)]) + " WHERE id=%s"
+                                c_upd.execute(q, (*nuevos_valores, sel_id))
+                                conn.commit()
                             
-                            c_upd.execute(q, (*datos_a_actualizar, sel_id))
-                            conn.commit()
-                        
-                        st.success(f"✅ ¡Cambios guardados solo para {d['nombre']}!")
-                        
-                        # Limpiamos las llaves de la memoria de Streamlit para este alumno antes del rerun
-                        for i in range(1, 11):
-                            del st.session_state[f"f{i}_{sel_id}"]
-                            del st.session_state[f"n{i}_{sel_id}"]
-                            del st.session_state[f"e{i}_{sel_id}"]
-                        
-                        st.rerun()
-                        
-                    except Exception as e:
-                        if conn: conn.rollback()
-                        st.error(f"Error al guardar: {e}")
+                            st.success(f"✅ Se actualizaron las 10 instancias para {d['nombre']}")
+                            st.rerun()
+
+                        except Exception as e:
+                            st.error(f"Error al guardar: {e}")
         else:
             st.warning("No hay alumnos cargados.")
         conn.close()
