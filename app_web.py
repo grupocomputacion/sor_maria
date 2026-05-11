@@ -119,7 +119,7 @@ elif menu == "Gestión de Encuentros":
             st.warning("Debe cargar alumnos primero.")
         conn.close()
 
-# --- 3. FICHA Y REPORTES (CORRECCIÓN DEFINITIVA BYTES/PDF) ---
+# --- 3. FICHA Y REPORTES (CORRECCIÓN DEFINITIVA) ---
 elif menu == "Ficha y Reportes":
     st.subheader("📊 Fichas Individuales y Reportes Generales")
     conn = conectar()
@@ -127,75 +127,79 @@ elif menu == "Ficha y Reportes":
     if conn:
         tab1, tab2 = st.tabs(["📄 Ficha de Alumno (Individual)", "📋 Reporte General de Cursada"])
 
+        # Función auxiliar para limpiar texto
+        def clean_text(t):
+            return str(t).encode('latin-1', 'replace').decode('latin-1')
+
         with tab1:
             st.write("#### Generar Ficha Pedagógica Individual")
             df_a = pd.read_sql("SELECT id, nombre, curso FROM alumnos ORDER BY nombre", conn)
+            
             if not df_a.empty:
-                sel_id = st.selectbox("Seleccione el Alumno para el PDF", df_a['id'].tolist(), 
-                                      format_func=lambda x: f"{df_a[df_a['id']==x]['nombre'].values[0]} ({df_a[df_a['id']==x]['curso'].values[0]})")
+                # Usamos el nombre para el formato, pero el ID para la búsqueda
+                sel_id = st.selectbox(
+                    "Seleccione el Alumno para el PDF", 
+                    df_a['id'].tolist(), 
+                    format_func=lambda x: f"{df_a[df_a['id']==x]['nombre'].values[0]} ({df_a[df_a['id']==x]['curso'].values[0]})"
+                )
                 
-                if st.button("🖨️ Generar Ficha PDF"):
+                # Generamos el PDF
+                if st.button("🖨️ Preparar Ficha PDF"):
                     try:
                         with conn.cursor(cursor_factory=extras.DictCursor) as c:
                             c.execute("SELECT * FROM alumnos WHERE id=%s", (sel_id,))
                             a = c.fetchone()
+                            # Ajustamos la consulta de seguimientos (asegúrate que la tabla existe)
                             c.execute("SELECT fecha_encuentro, objetivo, observaciones FROM seguimientos WHERE alumno_id=%s ORDER BY fecha_encuentro", (sel_id,))
                             encuentros = c.fetchall()
 
-                        pdf = PDF()
+                        pdf = FPDF() # Asegúrate que la clase es FPDF o la que hayas definido
                         pdf.add_page()
                         
-                        # Limpieza de caracteres para evitar errores de encoding en el PDF
-                        def clean_text(t):
-                            return str(t).encode('latin-1', 'replace').decode('latin-1')
-
+                        # Encabezado con color
                         pdf.set_fill_color(240, 240, 240)
                         pdf.set_font('Arial', 'B', 12)
                         pdf.cell(0, 10, f"FICHA DE SEGUIMIENTO: {clean_text(a['nombre']).upper()}", 1, 1, 'C', fill=True)
                         pdf.ln(5)
                         
+                        # Datos básicos
                         pdf.set_font('Arial', 'B', 10)
                         pdf.cell(30, 8, "Curso:", 0); pdf.set_font('Arial', '', 10); pdf.cell(60, 8, clean_text(a['curso']), 0)
-                        pdf.set_font('Arial', 'B', 10); pdf.cell(30, 8, "Division:", 0); pdf.set_font('Arial', '', 10); pdf.cell(0, 8, clean_text(a['division']), 0, 1)
+                        pdf.set_font('Arial', 'B', 10); pdf.cell(30, 8, "Division:", 0); pdf.set_font('Arial', '', 10); pdf.cell(0, 8, clean_text(a.get('division', '-')), 0, 1)
                         
                         pdf.ln(5)
                         pdf.set_font('Arial', 'B', 11)
-                        pdf.cell(0, 10, "INSTANCIAS EVALUATIVAS", 0, 1, 'L')
-                        pdf.set_font('Arial', 'B', 9)
-                        pdf.cell(30, 8, "Fecha", 1); pdf.cell(120, 8, "Nota / Observacion", 1); pdf.cell(40, 8, "Estado", 1, 1)
-                        
-                        pdf.set_font('Arial', '', 9)
-                        for i in range(1, 11):
-                            if a[f'n{i}']:
-                                f_val = a[f'f{i}'].strftime("%d/%m/%Y") if a[f'f{i}'] else "-"
-                                est_val = "APROBADO" if a[f'e{i}'] == "S" else "PENDIENTE"
-                                pdf.cell(30, 8, f_val, 1)
-                                pdf.cell(120, 8, clean_text(a[f'n{i}'])[:70], 1)
-                                pdf.cell(40, 8, est_val, 1, 1)
+                        pdf.cell(0, 10, "INFORMACION ACADEMICA", 0, 1, 'L')
+                        pdf.set_font('Arial', '', 10)
+                        pdf.multi_cell(0, 8, f"Materias Adeudadas: {clean_text(a.get('materias_adeudadas', 'Ninguna'))}")
+                        pdf.cell(0, 8, f"Tercera Materia: {clean_text(a.get('tercera_materia', 'N/A'))}", ln=True)
+                        pdf.cell(0, 8, f"Estado General: {clean_text(a.get('estado_general', 'Pendiente'))}", ln=True)
 
+                        # Detalle de Encuentros (Si existen)
                         if encuentros:
                             pdf.ln(10)
                             pdf.set_font('Arial', 'B', 11)
                             pdf.cell(0, 10, "DETALLE DE ENCUENTROS", 0, 1, 'L')
                             for enc in encuentros:
                                 pdf.set_font('Arial', 'B', 9)
-                                pdf.cell(0, 8, f"Fecha: {enc[0].strftime('%d/%m/%Y')} - Obj: {clean_text(enc[1])}", "T", 1)
+                                fecha_str = enc[0].strftime('%d/%m/%Y') if enc[0] else "S/F"
+                                pdf.cell(0, 8, f"Fecha: {fecha_str} - Obj: {clean_text(enc[1])}", "T", 1)
                                 pdf.set_font('Arial', '', 9)
-                                pdf.multi_cell(0, 6, f"Detalle: {clean_text(enc[2])}", 0)
+                                pdf.multi_cell(0, 6, f"Observaciones: {clean_text(enc[2])}", 0)
                                 pdf.ln(2)
 
-                            # --- FIX SEGURO ---
-                            pdf_raw = pdf.output(dest='S')
-                            # Si pdf_raw es string, lo encodamos. Si ya es bytes, lo dejamos pasar.
-                            if isinstance(pdf_raw, str):
-                                pdf_raw = pdf_raw.encode('latin-1')
+                        # Output y Botón de descarga
+                        pdf_raw = pdf.output(dest='S')
+                        if isinstance(pdf_raw, str):
+                            pdf_raw = pdf_raw.encode('latin-1', 'replace')
 
-                            st.download_button(
-                                label=f"📥 Bajar PDF {a['nombre']}", 
-                                data=pdf_raw, 
-                                file_name=f"Ficha_{a['nombre']}.pdf", 
-                                mime="application/pdf"
-                            )                       
+                        st.download_button(
+                            label=f"📥 Descargar PDF de {a['nombre']}",
+                            data=pdf_raw,
+                            file_name=f"Ficha_{a['nombre'].replace(' ', '_')}.pdf",
+                            mime="application/pdf"
+                        )
+                        st.success("PDF generado. Haz clic arriba para descargar.")
 
                     except Exception as e:
                         st.error(f"Error generando PDF: {e}")
@@ -203,61 +207,59 @@ elif menu == "Ficha y Reportes":
                 st.warning("No hay alumnos cargados.")
 
         with tab2:
-            st.write("#### Filtros de Reporte General")
-            c1, c2, c3, c4 = st.columns(4)
-            f_cur = c1.text_input("Curso", key="rep_cur")
-            f_div = c2.text_input("División", key="rep_div")
-            f_mat = c3.text_input("Materia", key="rep_mat")
-            f_est = c4.selectbox("Estado", ["TODOS", "APROBADO", "PENDIENTE"], key="rep_est")
+            st.write("#### Reporte General")
+            c1, c2, c3 = st.columns(3)
+            f_cur = c1.text_input("Filtrar Curso", key="rep_cur")
+            f_div = c2.text_input("Filtrar División", key="rep_div")
+            f_est = c3.selectbox("Estado", ["TODOS", "Aprobada", "Pendiente", "En Curso"], key="rep_est")
 
-            query = "SELECT nombre, curso, division, tercera_materia, profesor, estado FROM alumnos WHERE 1=1"
+            # Query ajustada a tus nombres de columna reales
+            query = "SELECT nombre, curso, division, tercera_materia, estado_general FROM alumnos WHERE 1=1"
             params = []
             if f_cur: query += " AND curso ILIKE %s"; params.append(f"%{f_cur}%")
             if f_div: query += " AND division ILIKE %s"; params.append(f"%{f_div}%")
-            if f_mat: query += " AND tercera_materia ILIKE %s"; params.append(f"%{f_mat}%")
+            if f_est != "TODOS": query += " AND estado_general = %s"; params.append(f_est)
             
             df_reporte = pd.read_sql(query, conn, params=params)
-            if f_est != "TODOS":
-                df_reporte = df_reporte[df_reporte['estado'] == f_est]
-
             st.dataframe(df_reporte, use_container_width=True)
 
             if not df_reporte.empty:
-                if st.button("📊 Generar Reporte General PDF"):
+                if st.button("📊 Preparar Reporte General PDF"):
                     try:
-                        pdf_rep = PDF()
+                        pdf_rep = FPDF()
                         pdf_rep.add_page()
                         pdf_rep.set_font('Arial', 'B', 14)
-                        pdf_rep.cell(0, 10, "REPORTE GENERAL - ESTADO DE ALUMNOS", 0, 1, 'C')
+                        pdf_rep.cell(0, 10, "REPORTE GENERAL DE ALUMNOS", 0, 1, 'C')
                         pdf_rep.ln(5)
                         
+                        # Encabezados de tabla
                         pdf_rep.set_font('Arial', 'B', 9)
                         pdf_rep.set_fill_color(200, 220, 255)
                         pdf_rep.cell(60, 10, "Alumno", 1, 0, 'C', True)
                         pdf_rep.cell(30, 10, "Curso/Div", 1, 0, 'C', True)
                         pdf_rep.cell(60, 10, "Materia", 1, 0, 'C', True)
-                        pdf_rep.cell(30, 10, "Estado", 1, 1, 'C', True)
+                        pdf_rep.cell(35, 10, "Estado", 1, 1, 'C', True)
 
                         pdf_rep.set_font('Arial', '', 8)
                         for _, r in df_reporte.iterrows():
-                            pdf_rep.cell(60, 8, clean_text(r['nombre'])[:30], 1)
+                            pdf_rep.cell(60, 8, clean_text(r['nombre'])[:35], 1)
                             pdf_rep.cell(30, 8, f"{r['curso']} {r['division']}", 1, 0, 'C')
-                            pdf_rep.cell(60, 8, clean_text(r['tercera_materia'])[:30], 1)
-                            pdf_rep.cell(30, 8, str(r['estado']), 1, 1, 'C')
+                            pdf_rep.cell(60, 8, clean_text(r['tercera_materia'])[:35], 1)
+                            pdf_rep.cell(35, 8, clean_text(r['estado_general']), 1, 1, 'C')
 
-                        # --- FIX SEGURO ---
                         pdf_rep_raw = pdf_rep.output(dest='S')
                         if isinstance(pdf_rep_raw, str):
-                            pdf_rep_raw = pdf_rep_raw.encode('latin-1')
+                            pdf_rep_raw = pdf_rep_raw.encode('latin-1', 'replace')
 
                         st.download_button(
-                            label="📥 Bajar Reporte", 
-                            data=pdf_rep_raw, 
-                            file_name="Reporte.pdf", 
+                            label="📥 Descargar Reporte PDF",
+                            data=pdf_rep_raw,
+                            file_name="Reporte_General.pdf",
                             mime="application/pdf"
                         )
                     except Exception as e:
                         st.error(f"Error generando Reporte: {e}")
+        
         conn.close()
 
 # --- 4. CARGAR ALUMNO ---
