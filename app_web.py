@@ -59,43 +59,59 @@ if menu == "Seguimiento de Notas":
     st.subheader("📝 Instancias de Evaluación")
     conn = conectar()
     if conn:
-        # Traemos alumnos con un diccionario para no errar en índices
+        # Traemos alumnos
         df = pd.read_sql("SELECT id, nombre, curso FROM alumnos ORDER BY nombre", conn)
         
         if not df.empty:
             sel_id = st.selectbox("Seleccione Alumno", df['id'].tolist(), 
                                   format_func=lambda x: f"{df[df['id']==x]['nombre'].values[0]} ({df[df['id']==x]['curso'].values[0]})")
             
-            # Traemos el registro completo como diccionario
+            # Traemos el registro completo
             with conn.cursor(cursor_factory=extras.DictCursor) as c:
                 c.execute("SELECT * FROM alumnos WHERE id=%s", (sel_id,))
                 d = c.fetchone()
             
             if d:
-                with st.form("form_notas"):
+                # Usamos un formulario para agrupar los cambios
+                with st.form("form_notas", clear_on_submit=True):
                     st.markdown(f"### Estudiante: **{d['nombre']}**")
+                    st.info("Nota: Las fechas vacías se guardarán como nulas.")
+                    
                     nuevos_datos = []
+                    
                     for i in range(1, 11):
                         c1, c2, c3 = st.columns([1.5, 3, 1])
-                        # Acceso por nombre de columna para evitar errores de índice
-                        f_db = d[f'f{i}']
-                        f_ini = f_db if isinstance(f_db, (date, datetime)) else date.today()
                         
-                        f_val = c1.date_input(f"Fecha {i}", value=f_ini, key=f"f{i}")
-                        n_val = c2.text_input(f"Nota {i}", value=d[f'n{i}'] if d[f'n{i}'] else "", key=f"n{i}")
+                        # 1. LOGICA DE FECHA: Si en DB es None, mostramos vacío (None)
+                        f_db = d[f'f{i}']
+                        # Para que date_input permita estar vacío, usamos value=f_db (siendo None o fecha)
+                        # Nota: Si tu versión de Streamlit es antigua, usará date.today() por defecto.
+                        f_val = c1.date_input(f"Fecha {i}", value=f_db, key=f"f{i}", help="Seleccione fecha")
+                        
+                        # 2. LOGICA DE NOTA
+                        n_val = c2.text_input(f"Nota/Obs {i}", value=d[f'n{i}'] if d[f'n{i}'] else "", key=f"n{i}")
+                        
+                        # 3. LOGICA DE ESTADO (Checkbox)
                         a_val = c3.checkbox("APROBADO", value=(d[f'e{i}'] == "S"), key=f"e{i}")
                         
+                        # Armamos la lista para el UPDATE
                         nuevos_datos.extend([n_val, "S" if a_val else "N", f_val])
                     
-                    if st.form_submit_button("💾 Guardar Cambios"):
-                        with conn.cursor() as c_upd:
-                            q = "UPDATE alumnos SET " + ", ".join([f"n{i}=%s, e{i}=%s, f{i}=%s" for i in range(1, 11)]) + " WHERE id=%s"
-                            c_upd.execute(q, (*nuevos_datos, sel_id))
-                            conn.commit()
-                        st.success("¡Datos actualizados!")
-                        st.rerun()
+                    if st.form_submit_button("💾 Guardar y Limpiar"):
+                        try:
+                            with conn.cursor() as c_upd:
+                                # Construimos la query dinámicamente
+                                q = "UPDATE alumnos SET " + ", ".join([f"n{i}=%s, e{i}=%s, f{i}=%s" for i in range(1, 11)]) + " WHERE id=%s"
+                                c_upd.execute(q, (*nuevos_datos, sel_id))
+                                conn.commit()
+                            
+                            st.success(f"✅ Notas de {d['nombre']} actualizadas.")
+                            # st.rerun() limpia los estados de los widgets y recarga la info fresca
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error al guardar en Neon: {e}")
         else:
-            st.warning("No hay alumnos cargados. Por favor, ve a 'Cargar Alumno'.")
+            st.warning("No hay alumnos cargados.")
         conn.close()
 
 # --- 2. GESTIÓN DE ENCUENTROS ---
