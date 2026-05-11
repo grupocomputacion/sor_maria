@@ -326,6 +326,10 @@ elif menu == "Modificar Alumno":
                 LEFT JOIN inscripciones_tercera i ON a.id = i.id_alumno
                 WHERE a.nombre ILIKE %s
             """
+            # Agrega esto para depurar
+            print(f"Ejecutando consulta en: {sql_select}") 
+            # Verifica si el nombre que aparece después del FROM es idéntico al que ves en Supabase
+            
             c.execute(sql_select, (f"%{nombre_buscar}%",))
             resultados = c.fetchall()
         
