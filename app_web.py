@@ -328,10 +328,11 @@ elif menu == "Cargar Alumno":
         col_m1, col_m2 = st.columns(2)
         with col_m1:
             tercera_mat = st.text_input("Tercera Materia elegida")
-            profesor = st.text_input("Profesor de la materia") # NUEVO CAMPO
+            profesor = st.text_input("Profesor de la materia")
         with col_m2:
-            modalidad = st.selectbox("Modalidad de examen", ["Materia Completa", "Por Temas", "Trabajo Práctico"]) # NUEVO CAMPO
-            estado_gen = st.selectbox("Estado General", ["Pendiente", "Aprobada", "No Aprobada", "En Curso"])
+            modalidad = st.selectbox("Modalidad de examen", ["Materia Completa", "Por Temas", "Trabajo Práctico"])
+            # Variable interna normalizada
+            estado_val = st.selectbox("Estado", ["Pendiente", "Aprobada", "No Aprobada", "En Curso"])
 
         if st.form_submit_button("Guardar"):
             if nom and cur:
@@ -339,13 +340,13 @@ elif menu == "Cargar Alumno":
                 if conn:
                     try:
                         with conn.cursor() as c:
-                            # Agregamos 'profesor' y 'modalidad' al INSERT
+                            # SQL NORMALIZADO: Se cambió 'estado_general' por 'estado'
                             sql = """
                                 INSERT INTO alumnos 
-                                (nombre, curso, division, materias_adeudadas, tercera_materia, profesor, modalidad, estado_general) 
+                                (nombre, curso, division, materias_adeudadas, tercera_materia, profesor, modalidad, estado) 
                                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                             """
-                            valores = (nom, cur, div, mat_adeuda, tercera_mat, profesor, modalidad, estado_gen)
+                            valores = (nom, cur, div, mat_adeuda, tercera_mat, profesor, modalidad, estado_val)
                             c.execute(sql, valores)
                             conn.commit()
                         st.success(f"✅ {nom} registrado con éxito.")
