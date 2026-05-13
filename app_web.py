@@ -399,23 +399,23 @@ elif menu == "Modificar Alumno":
                         col_e1, col_e2 = st.columns(2)
                         with col_e1:
                             nueva_tercera = st.text_input("Tercera Materia", value=al_sel.get('tercera_materia', ''))
-                            nuevo_profesor = st.text_input("Profesor", value=al_sel.get('profesor', '')) # NUEVO CAMPO
+                            nuevo_profesor = st.text_input("Profesor", value=al_sel.get('profesor', ''))
                         with col_e2:
                             # Modalidad
                             mods = ["Materia Completa", "Por Temas", "Trabajo Práctico"]
                             mod_db = al_sel.get('modalidad', 'Materia Completa')
                             idx_mod = mods.index(mod_db) if mod_db in mods else 0
-                            nueva_modalidad = st.selectbox("Modalidad", mods, index=idx_mod) # NUEVO CAMPO
+                            nueva_modalidad = st.selectbox("Modalidad", mods, index=idx_mod)
                             
-                            # Estado
+                            # Estado - NORMALIZADO A estado_general
                             estados = ["Pendiente", "Aprobada", "No Aprobada", "En Curso"]
-                            est_db = al_sel.get('estado', 'Pendiente')
+                            est_db = al_sel.get('estado_general', 'Pendiente')
                             idx_est = estados.index(est_db) if est_db in estados else 0
                             nuevo_estado = st.selectbox("Estado General", estados, index=idx_est)
 
                         if st.form_submit_button("Guardar Cambios"):
                             with conn.cursor() as c_up:
-                                # Agregamos profesor y modalidad al UPDATE
+                                # Sentencia SQL con estado_general normalizado
                                 sql_update = """
                                     UPDATE alumnos 
                                     SET nombre=%s, curso=%s, division=%s, 
@@ -438,6 +438,10 @@ elif menu == "Modificar Alumno":
                 st.error(f"Hubo un error con la base de datos: {e}")
             finally:
                 conn.close()
+
+
+
+
 # --- 6. BACKUP ---
 elif menu == "Backup & Datos":
     st.subheader("💾 Gestión de Datos")
