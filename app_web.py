@@ -407,20 +407,21 @@ elif menu == "Modificar Alumno":
                             idx_mod = mods.index(mod_db) if mod_db in mods else 0
                             nueva_modalidad = st.selectbox("Modalidad", mods, index=idx_mod)
                             
-                            # Estado - NORMALIZADO A estado_general
+                            # Estado - CORREGIDO A 'estado' que es el nombre real en tu DB
                             estados = ["Pendiente", "Aprobada", "No Aprobada", "En Curso"]
-                            est_db = al_sel.get('estado_general', 'Pendiente')
+                            # Buscamos 'estado' en el diccionario del alumno
+                            est_db = al_sel.get('estado', 'Pendiente')
                             idx_est = estados.index(est_db) if est_db in estados else 0
-                            nuevo_estado = st.selectbox("Estado General", estados, index=idx_est)
+                            nuevo_estado = st.selectbox("Estado", estados, index=idx_est)
 
                         if st.form_submit_button("Guardar Cambios"):
                             with conn.cursor() as c_up:
-                                # Sentencia SQL con estado_general normalizado
+                                # SQL LIMPIO: Usamos 'estado' directamente
                                 sql_update = """
                                     UPDATE alumnos 
                                     SET nombre=%s, curso=%s, division=%s, 
                                         materias_adeudadas=%s, tercera_materia=%s, 
-                                        profesor=%s, modalidad=%s, estado_general=%s
+                                        profesor=%s, modalidad=%s, estado=%s
                                     WHERE id=%s
                                 """
                                 c_up.execute(sql_update, (
@@ -435,7 +436,8 @@ elif menu == "Modificar Alumno":
                 else:
                     st.warning("No se encontraron alumnos.")
             except Exception as e:
-                st.error(f"Hubo un error con la base de datos: {e}")
+                # El error de Postgres saldrá aquí si algo más falla
+                st.error(f"Error técnico con la base de datos: {e}")
             finally:
                 conn.close()
 
