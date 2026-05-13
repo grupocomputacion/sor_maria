@@ -409,7 +409,7 @@ elif menu == "Modificar Alumno":
                             
                             # Estado
                             estados = ["Pendiente", "Aprobada", "No Aprobada", "En Curso"]
-                            est_db = al_sel.get('estado_general', 'Pendiente')
+                            est_db = al_sel.get('estado', 'Pendiente')
                             idx_est = estados.index(est_db) if est_db in estados else 0
                             nuevo_estado = st.selectbox("Estado General", estados, index=idx_est)
 
