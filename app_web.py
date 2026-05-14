@@ -55,7 +55,7 @@ init_db()
 menu = st.sidebar.radio("MENÚ PRINCIPAL", ["Seguimiento de Notas", "Gestión de Encuentros", "Ficha y Reportes", "Cargar Alumno", "Modificar Alumno", "Backup & Datos"])
 
 
-# --- 1. SEGUIMIENTO DE NOTAS (CON CONTEXTO DE MATERIA) ---
+# --- 1. SEGUIMIENTO DE NOTAS (ACTUALIZADO) ---
 if menu == "Seguimiento de Notas":
     st.subheader("📝 Instancias de Evaluación")
     conn = conectar()
@@ -78,42 +78,47 @@ if menu == "Seguimiento de Notas":
                 d = c.fetchone()
 
             if d:
-                # --- NUEVA SECCIÓN DE CONTEXTO ---
                 st.markdown(f"### Estudiante: **{d['nombre']}**")
                 
-                # Mostramos la materia y el estado en columnas para que se vea ordenado
                 ctx1, ctx2, ctx3 = st.columns(3)
                 ctx1.metric("Curso", f"{d['curso']} {d.get('division', '')}")
                 ctx2.metric("Tercera Materia", d.get('tercera_materia', 'No asignada'))
-                ctx3.metric("Estado General", d.get('estado_general', 'Pendiente'))
+                # Normalizado a 'estado' según tu base de datos
+                ctx3.metric("Estado Actual", d.get('estado', 'Pendience'))
                 
                 st.divider()
 
-                # ── Encabezado ──────────────────────────────────────────────
-                h0, h1, h2, h3, h4, h5 = st.columns([0.4, 0.7, 1.8, 3.2, 1.0, 0.9])
+                # ── Encabezado (Basado en Captura de pantalla 2026-05-14) ────────
+                h0, h1, h2, h3, h4, h5 = st.columns([0.4, 0.7, 1.8, 3.2, 1.3, 0.6])
                 headers = ["**#**","**Cargar**","**Fecha**","**Observaciones**","**Aprobado**","**Limpiar**"]
                 for col, txt in zip([h0, h1, h2, h3, h4, h5], headers):
                     col.markdown(txt)
 
-                # ── Filas de datos (Aislamiento por sel_id) ─────────────────
+                # ── Filas de datos ─────────────────
                 for i in range(1, 11):
-                    c0, c1, c2, c3, c4, c5 = st.columns([0.4, 0.7, 1.8, 3.2, 1.0, 0.9])
+                    c0, c1, c2, c3, c4, c5 = st.columns([0.4, 0.7, 1.8, 3.2, 1.3, 0.6])
                     c0.markdown(f"<div style='padding-top:8px'><b>{i}</b></div>", unsafe_allow_html=True)
 
                     v_act = d[f"f{i}"] is not None
                     v_f   = d[f"f{i}"] if d[f"f{i}"] else date.today()
                     v_n   = d[f"n{i}"] if d[f"n{i}"] else ""
-                    v_e   = d[f"e{i}"] == "S"
+                    
+                    # Lógica de carga de valor previo de Aprobado
+                    v_e_db = d[f"e{i}"] if d[f"e{i}"] else "No"
+                    opciones_aprobado = ["No", "Tema", "Materia"]
+                    idx_aprobado = opciones_aprobado.index(v_e_db) if v_e_db in opciones_aprobado else 0
 
-                    act = c1.checkbox("Cargar", value=v_act, key=f"act_{i}_{sel_id}", label_visibility="collapsed")
+                    act = c1.checkbox(" ", value=v_act, key=f"act_{i}_{sel_id}", label_visibility="collapsed")
 
                     if act:
                         c2.date_input(f"F{i}", value=v_f, key=f"f_{i}_{sel_id}", label_visibility="collapsed", format="DD/MM/YYYY")
                     else:
                         c2.markdown("<div style='color:#aaa;padding-top:8px;font-size:0.9em;'>dd/mm/aaaa</div>", unsafe_allow_html=True)
 
-                    c3.text_input(f"N{i}", value=v_n, key=f"n_{i}_{sel_id}", label_visibility="collapsed", placeholder="Notas de la instancia...")
-                    c4.checkbox("E{i}", value=v_e, key=f"e_{i}_{sel_id}", label_visibility="collapsed")
+                    c3.text_input(f"N{i}", value=v_n, key=f"n_{i}_{sel_id}", label_visibility="collapsed", placeholder="Notas...")
+                    
+                    # Selector de Aprobación (Mejora solicitada)
+                    c4.selectbox(" ", opciones_aprobado, index=idx_aprobado, key=f"e_{i}_{sel_id}", label_visibility="collapsed")
 
                     if c5.button("🗑️", key=f"limp_{i}_{sel_id}"):
                         for k in [f"act_{i}_{sel_id}", f"f_{i}_{sel_id}", f"n_{i}_{sel_id}", f"e_{i}_{sel_id}"]:
@@ -122,36 +127,43 @@ if menu == "Seguimiento de Notas":
 
                 st.divider()
 
-                # ── Botón Guardar y Resetear ────────────────────────────────
+                # ── Botón Guardar con Actualización de Estado ──────────────────
                 if st.button("💾 Guardar Cambios y Finalizar", use_container_width=True, type="primary"):
                     try:
                         valores = []
+                        materia_aprobada_ahora = False
+                        
                         for i in range(1, 11):
                             is_act = st.session_state[f"act_{i}_{sel_id}"]
                             f_val  = st.session_state.get(f"f_{i}_{sel_id}") if is_act else None
                             n_val  = st.session_state[f"n_{i}_{sel_id}"]
-                            e_val  = "S" if st.session_state[f"e_{i}_{sel_id}"] else "N"
+                            e_val  = st.session_state[f"e_{i}_{sel_id}"]
+                            
+                            if e_val == "Materia":
+                                materia_aprobada_ahora = True
+                                
                             valores.extend([n_val, e_val, f_val])
 
                         with conn.cursor() as c_upd:
+                            # 1. Guardar las notas de las instancias
                             q = "UPDATE alumnos SET " + ", ".join([f"n{i}=%s, e{i}=%s, f{i}=%s" for i in range(1, 11)]) + " WHERE id=%s"
                             c_upd.execute(q, (*valores, sel_id))
+                            
+                            # 2. Si se marcó 'Materia', actualizamos el estado general
+                            if materia_aprobada_ahora:
+                                c_upd.execute("UPDATE alumnos SET estado = 'Aprobada' WHERE id = %s", (sel_id,))
+                            
                             conn.commit()
 
-                        st.success(f"✅ ¡Datos de {d['nombre']} guardados! Preparando nueva búsqueda...")
+                        st.success(f"✅ ¡Datos guardados! {'¡Felicitaciones, materia aprobada!' if materia_aprobada_ahora else ''}")
                         
-                        # Reseteamos el buscador y limpiamos rastro
                         st.session_state.reset_buscador += 1
-                        if "alumno_activo" in st.session_state:
-                            del st.session_state["alumno_activo"]
-                        
                         st.rerun()
 
                     except Exception as e:
                         st.error(f"Error al guardar: {e}")
 
-        conn.close()
-
+    conn.close()
 
 
 # --- 2. GESTIÓN DE ENCUENTROS ---
