@@ -187,6 +187,7 @@ elif menu == "Gestión de Encuentros":
             st.warning("Debe cargar alumnos primero.")
         conn.close()
 
+
 # --- 3. FICHA Y REPORTES (CORRECCIÓN DEFINITIVA) ---
 elif menu == "Ficha y Reportes":
     st.subheader("📊 Fichas Individuales y Reportes Generales")
@@ -195,42 +196,39 @@ elif menu == "Ficha y Reportes":
     if conn:
         tab1, tab2 = st.tabs(["📄 Ficha de Alumno (Individual)", "📋 Reporte General de Cursada"])
 
-        # Función auxiliar para limpiar texto
         def clean_text(t):
             return str(t).encode('latin-1', 'replace').decode('latin-1')
 
+        # --- TAB 1: FICHA INDIVIDUAL ---
         with tab1:
             st.write("#### Generar Ficha Pedagógica Individual")
             df_a = pd.read_sql("SELECT id, nombre, curso FROM alumnos ORDER BY nombre", conn)
             
             if not df_a.empty:
-                # Usamos el nombre para el formato, pero el ID para la búsqueda
                 sel_id = st.selectbox(
                     "Seleccione el Alumno para el PDF", 
                     df_a['id'].tolist(), 
                     format_func=lambda x: f"{df_a[df_a['id']==x]['nombre'].values[0]} ({df_a[df_a['id']==x]['curso'].values[0]})"
                 )
                 
-                # Generamos el PDF
                 if st.button("🖨️ Preparar Ficha PDF"):
                     try:
                         with conn.cursor(cursor_factory=extras.DictCursor) as c:
                             c.execute("SELECT * FROM alumnos WHERE id=%s", (sel_id,))
                             a = c.fetchone()
-                            # Ajustamos la consulta de seguimientos (asegúrate que la tabla existe)
+                            # Ajuste dinámico de columna estado para el PDF
+                            col_est_ficha = 'estado' if 'estado' in a.keys() else 'estado_general'
+                            
                             c.execute("SELECT fecha_encuentro, objetivo, observaciones FROM seguimientos WHERE alumno_id=%s ORDER BY fecha_encuentro", (sel_id,))
                             encuentros = c.fetchall()
 
-                        pdf = FPDF() # Asegúrate que la clase es FPDF o la que hayas definido
+                        pdf = FPDF()
                         pdf.add_page()
-                        
-                        # Encabezado con color
                         pdf.set_fill_color(240, 240, 240)
                         pdf.set_font('Arial', 'B', 12)
                         pdf.cell(0, 10, f"FICHA DE SEGUIMIENTO: {clean_text(a['nombre']).upper()}", 1, 1, 'C', fill=True)
                         pdf.ln(5)
                         
-                        # Datos básicos
                         pdf.set_font('Arial', 'B', 10)
                         pdf.cell(30, 8, "Curso:", 0); pdf.set_font('Arial', '', 10); pdf.cell(60, 8, clean_text(a['curso']), 0)
                         pdf.set_font('Arial', 'B', 10); pdf.cell(30, 8, "Division:", 0); pdf.set_font('Arial', '', 10); pdf.cell(0, 8, clean_text(a.get('division', '-')), 0, 1)
@@ -241,9 +239,8 @@ elif menu == "Ficha y Reportes":
                         pdf.set_font('Arial', '', 10)
                         pdf.multi_cell(0, 8, f"Materias Adeudadas: {clean_text(a.get('materias_adeudadas', 'Ninguna'))}")
                         pdf.cell(0, 8, f"Tercera Materia: {clean_text(a.get('tercera_materia', 'N/A'))}", ln=True)
-                        pdf.cell(0, 8, f"Estado General: {clean_text(a.get('estado_general', 'Pendiente'))}", ln=True)
+                        pdf.cell(0, 8, f"Estado General: {clean_text(a.get(col_est_ficha, 'Pendiente'))}", ln=True)
 
-                        # Detalle de Encuentros (Si existen)
                         if encuentros:
                             pdf.ln(10)
                             pdf.set_font('Arial', 'B', 11)
@@ -256,10 +253,8 @@ elif menu == "Ficha y Reportes":
                                 pdf.multi_cell(0, 6, f"Observaciones: {clean_text(enc[2])}", 0)
                                 pdf.ln(2)
 
-                        # Output y Botón de descarga
                         pdf_raw = pdf.output(dest='S')
-                        if isinstance(pdf_raw, str):
-                            pdf_raw = pdf_raw.encode('latin-1', 'replace')
+                        if isinstance(pdf_raw, str): pdf_raw = pdf_raw.encode('latin-1', 'replace')
 
                         st.download_button(
                             label=f"📥 Descargar PDF de {a['nombre']}",
@@ -267,55 +262,52 @@ elif menu == "Ficha y Reportes":
                             file_name=f"Ficha_{a['nombre'].replace(' ', '_')}.pdf",
                             mime="application/pdf"
                         )
-                        st.success("PDF generado. Haz clic arriba para descargar.")
-
+                        st.success("PDF generado.")
                     except Exception as e:
                         st.error(f"Error generando PDF: {e}")
             else:
                 st.warning("No hay alumnos cargados.")
 
-                with tab2:
-                    st.write("#### Reporte General")
-                    c1, c2, c3 = st.columns(3)
-                    f_cur = c1.text_input("Filtrar Curso", key="rep_cur")
-                    f_div = c2.text_input("Filtrar División", key="rep_div")
-                    # Ajustamos las opciones del selectbox para que coincidan con tus datos
-                    f_est = c3.selectbox("Estado", ["TODOS", "Pendiente", "Aprobada", "No Aprobada", "En Curso"], key="rep_est")
+        # --- TAB 2: REPORTE GENERAL (FUERA DEL ELSE ANTERIOR) ---
+        with tab2:
+            st.write("#### Reporte General de Cursada")
+            c1, c2, c3 = st.columns(3)
+            f_cur = c1.text_input("Filtrar Curso", key="rep_cur")
+            f_div = c2.text_input("Filtrar División", key="rep_div")
+            f_est = c3.selectbox("Estado", ["TODOS", "Pendiente", "Aprobada", "No Aprobada", "En Curso"], key="rep_est")
 
-                    # USAMOS SELECT * PARA EVITAR EL ERROR DE COLUMNA INEXISTENTE AL CARGAR
-                    query = "SELECT * FROM alumnos WHERE 1=1"
-                    params = []
-                    
-                    if f_cur: 
-                        query += " AND curso ILIKE %s"
-                        params.append(f"%{f_cur}%")
-                    if f_div: 
-                        query += " AND division ILIKE %s"
-                        params.append(f"%{f_div}%")
-                    
-                    # Ejecutamos la consulta de forma segura
-                    try:
-                        df_reporte = pd.read_sql(query, conn, params=params)
-                        
-                        # Filtramos el estado en el DataFrame de Pandas para evitar errores de SQL
-                        if f_est != "TODOS":
-                            # Ajusta 'estado_general' si en tu DB se llama 'estado'
-                            col_estado = 'estado_general' if 'estado_general' in df_reporte.columns else 'estado'
-                            if col_estado in df_reporte.columns:
-                                df_reporte = df_reporte[df_reporte[col_estado] == f_est]
+            query = "SELECT * FROM alumnos WHERE 1=1"
+            params = []
+            
+            if f_cur: 
+                query += " AND curso ILIKE %s"; params.append(f"%{f_cur}%")
+            if f_div: 
+                query += " AND division ILIKE %s"; params.append(f"%{f_div}%")
+            
+            try:
+                df_reporte = pd.read_sql(query, conn, params=params)
+                
+                # Normalización de columna estado para el filtro
+                col_estado = 'estado' if 'estado' in df_reporte.columns else 'estado_general'
+                
+                if f_est != "TODOS" and col_estado in df_reporte.columns:
+                    df_reporte = df_reporte[df_reporte[col_estado] == f_est]
 
-                        # Mostramos solo las columnas que existan para que la tabla sea limpia
-                        columnas_visibles = [c for c in ['nombre', 'curso', 'division', 'tercera_materia', 'estado_general'] if c in df_reporte.columns]
-                        st.dataframe(df_reporte[columnas_visibles], use_container_width=True)
-
-                        if not df_reporte.empty:
-                            if st.button("📊 Preparar Reporte General PDF"):
-                                # ... (aquí va el resto del código del PDF que te pasé antes)
-                                st.info("Generando archivo...")
+                # Columnas visibles dinámicas
+                cols_vis = ['nombre', 'curso', 'division', 'tercera_materia', col_estado]
+                columnas_finales = [c for c in cols_vis if c in df_reporte.columns]
+                
+                if not df_reporte.empty:
+                    st.dataframe(df_reporte[columnas_finales], use_container_width=True)
                     
-                    except Exception as e:
-                        st.error(f"Error al cargar el reporte: {e}")
-                        st.info("Revisa si los nombres de las columnas en Supabase coinciden con el código.")
+                    if st.button("📊 Preparar Reporte General PDF"):
+                        st.info("Generando reporte de toda la cursada...")
+                        # Aquí puedes añadir la lógica de PDF masivo similar a la individual
+                else:
+                    st.info("No hay alumnos que coincidan con los filtros.")
+            
+            except Exception as e:
+                st.error(f"Error al cargar el reporte: {e}")
 
         conn.close()
 
