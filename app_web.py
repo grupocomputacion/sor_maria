@@ -268,7 +268,7 @@ elif menu == "Ficha y Reportes":
             else:
                 st.warning("No hay alumnos cargados.")
 
-        # --- TAB 2: REPORTE GENERAL (FUERA DEL ELSE ANTERIOR) ---
+        # --- TAB 2: REPORTE GENERAL (SOLUCIÓN GENERACIÓN PDF) ---
         with tab2:
             st.write("#### Reporte General de Cursada")
             c1, c2, c3 = st.columns(3)
@@ -286,31 +286,65 @@ elif menu == "Ficha y Reportes":
             
             try:
                 df_reporte = pd.read_sql(query, conn, params=params)
-                
-                # Normalización de columna estado para el filtro
                 col_estado = 'estado' if 'estado' in df_reporte.columns else 'estado_general'
                 
                 if f_est != "TODOS" and col_estado in df_reporte.columns:
                     df_reporte = df_reporte[df_reporte[col_estado] == f_est]
 
-                # Columnas visibles dinámicas
                 cols_vis = ['nombre', 'curso', 'division', 'tercera_materia', col_estado]
                 columnas_finales = [c for c in cols_vis if c in df_reporte.columns]
                 
                 if not df_reporte.empty:
                     st.dataframe(df_reporte[columnas_finales], use_container_width=True)
                     
-                    if st.button("📊 Preparar Reporte General PDF"):
-                        st.info("Generando reporte de toda la cursada...")
-                        # Aquí puedes añadir la lógica de PDF masivo similar a la individual
+                    # --- BOTÓN CON LÓGICA DE PDF ---
+                    if st.button("📊 Generar Reporte General PDF"):
+                        try:
+                            pdf = FPDF()
+                            pdf.add_page()
+                            pdf.set_font('Arial', 'B', 14)
+                            pdf.cell(0, 10, clean_text("REPORTE GENERAL DE CURSADA"), 1, 1, 'C')
+                            pdf.ln(5)
+                            
+                            # Encabezados de tabla en el PDF
+                            pdf.set_font('Arial', 'B', 10)
+                            pdf.set_fill_color(200, 200, 200)
+                            pdf.cell(60, 8, "Nombre", 1, 0, 'C', True)
+                            pdf.cell(30, 8, "Curso", 1, 0, 'C', True)
+                            pdf.cell(20, 8, "Div", 1, 0, 'C', True)
+                            pdf.cell(40, 8, "Materia", 1, 0, 'C', True)
+                            pdf.cell(40, 8, "Estado", 1, 1, 'C', True)
+                            
+                            # Datos
+                            pdf.set_font('Arial', '', 9)
+                            for _, fila in df_reporte.iterrows():
+                                pdf.cell(60, 7, clean_text(fila['nombre'][:30]), 1)
+                                pdf.cell(30, 7, clean_text(fila['curso']), 1)
+                                pdf.cell(20, 7, clean_text(fila.get('division', '-')), 1)
+                                pdf.cell(40, 7, clean_text(fila.get('tercera_materia', '-')[:20]), 1)
+                                pdf.cell(40, 7, clean_text(fila.get(col_estado, 'Pendiente')), 1, 1)
+                            
+                            # Generar archivo en memoria
+                            pdf_raw = pdf.output(dest='S')
+                            if isinstance(pdf_raw, str):
+                                pdf_raw = pdf_raw.encode('latin-1', 'replace')
+                                
+                            st.download_button(
+                                label="📥 DESCARGAR REPORTE PDF",
+                                data=pdf_raw,
+                                file_name=f"Reporte_General_{date.today()}.pdf",
+                                mime="application/pdf",
+                                use_container_width=True
+                            )
+                            st.success("✅ Reporte listo para descargar.")
+                            
+                        except Exception as pdf_err:
+                            st.error(f"Error al construir el PDF: {pdf_err}")
                 else:
                     st.info("No hay alumnos que coincidan con los filtros.")
             
             except Exception as e:
                 st.error(f"Error al cargar el reporte: {e}")
-
-        conn.close()
-
 # --- 4. CARGAR ALUMNOS ---
 elif menu == "Cargar Alumno":
     st.subheader("➕ Alta de Alumno")
