@@ -84,7 +84,7 @@ if menu == "Seguimiento de Notas":
                 ctx1.metric("Curso", f"{d['curso']} {d.get('division', '')}")
                 ctx2.metric("Tercera Materia", d.get('tercera_materia', 'No asignada'))
                 # Normalizado a 'estado' según tu base de datos
-                ctx3.metric("Estado Actual", d.get('estado', 'Pendience'))
+                ctx3.metric("Estado Actual", d.get('estado', 'Pendiente'))
                 
                 st.divider()
 
@@ -105,7 +105,7 @@ if menu == "Seguimiento de Notas":
                     
                     # Lógica de carga de valor previo de Aprobado
                     v_e_db = d[f"e{i}"] if d[f"e{i}"] else "No"
-                    opciones_aprobado = ["No", "Tema", "Materia"]
+                    opciones_aprobado = ["No", "Tema", "Instancia", "Materia"]
                     idx_aprobado = opciones_aprobado.index(v_e_db) if v_e_db in opciones_aprobado else 0
 
                     act = c1.checkbox(" ", value=v_act, key=f"act_{i}_{sel_id}", label_visibility="collapsed")
@@ -127,11 +127,12 @@ if menu == "Seguimiento de Notas":
 
                 st.divider()
 
-                # ── Botón Guardar con Actualización de Estado ──────────────────
+                # ── Botón Guardar con Actualización de Estado (MEJORADO) ──────────────────
                 if st.button("💾 Guardar Cambios y Finalizar", use_container_width=True, type="primary"):
                     try:
                         valores = []
                         materia_aprobada_ahora = False
+                        en_curso_ahora = False
                         
                         for i in range(1, 11):
                             is_act = st.session_state[f"act_{i}_{sel_id}"]
@@ -139,23 +140,37 @@ if menu == "Seguimiento de Notas":
                             n_val  = st.session_state[f"n_{i}_{sel_id}"]
                             e_val  = st.session_state[f"e_{i}_{sel_id}"]
                             
+                            # Validaciones de Estado General
                             if e_val == "Materia":
                                 materia_aprobada_ahora = True
+                            elif e_val == "Instancia":
+                                en_curso_ahora = True
                                 
                             valores.extend([n_val, e_val, f_val])
 
                         with conn.cursor() as c_upd:
-                            # 1. Guardar las notas de las instancias
+                            # 1. Guardar el detalle de las 10 instancias
                             q = "UPDATE alumnos SET " + ", ".join([f"n{i}=%s, e{i}=%s, f{i}=%s" for i in range(1, 11)]) + " WHERE id=%s"
                             c_upd.execute(q, (*valores, sel_id))
                             
-                            # 2. Si se marcó 'Materia', actualizamos el estado general
+                            # 2. Lógica de jerarquía para el Estado General
+                            # Prioridad 1: Si aprobó la materia, queda Aprobada.
                             if materia_aprobada_ahora:
                                 c_upd.execute("UPDATE alumnos SET estado = 'Aprobada' WHERE id = %s", (sel_id,))
+                            # Prioridad 2: Si hay una instancia pero no aprobó la materia completa, queda En Curso.
+                            elif en_curso_ahora:
+                                c_upd.execute("UPDATE alumnos SET estado = 'En Curso' WHERE id = %s", (sel_id,))
                             
                             conn.commit()
 
-                        st.success(f"✅ ¡Datos guardados! {'¡Felicitaciones, materia aprobada!' if materia_aprobada_ahora else ''}")
+                        # Mensaje de éxito dinámico
+                        msg = "✅ ¡Datos guardados correctamente!"
+                        if materia_aprobada_ahora:
+                            msg = "🎉 ¡Datos guardados! El alumno ha APROBADO la materia."
+                        elif en_curso_ahora:
+                            msg = "⏳ ¡Datos guardados! El alumno ahora está EN CURSO."
+                        
+                        st.success(msg)
                         
                         st.session_state.reset_buscador += 1
                         st.rerun()
